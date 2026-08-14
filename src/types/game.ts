@@ -30,3 +30,7 @@ export type GameMessage =
   | { type: 'PLACE_BOMB'; bomb: Bomb }
   | { type: 'DAMAGE'; targetRole: 'host' | 'guest' }
   | { type: 'RETRY' };
+
+// 既存互換用型定義
+export type ClientMessage = GameMessage;
+export type HostMessage = GameMessage;

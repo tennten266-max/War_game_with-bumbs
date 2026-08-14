@@ -25,13 +25,11 @@ export default function HomePage() {
 
   // ホストが「対戦を開始する」を押した時
   const handleStartGame = () => {
-    // 相手（ゲスト）にスタート信号を送信
     sendMessage({ type: 'START_GAME' });
-    // 自身（ホスト）もゲーム画面へ遷移
     router.push('/game');
   };
 
-  // ゲスト側：ホストからの START_GAME メッセージを受信して自動で画面遷移
+  // ゲスト側：ホストからの START_GAME を受信して自動遷移
   useEffect(() => {
     onMessage((data: GameMessage) => {
       if (data.type === 'START_GAME') {
@@ -51,7 +49,6 @@ export default function HomePage() {
         </h1>
 
         {!isWaitingOrConnected ? (
-          /* ----- 初期画面（ルーム作成・参加） ----- */
           <div className="space-y-4 bg-gray-900 p-6 rounded-2xl border border-gray-800 shadow-xl">
             <button
               onClick={handleCreateRoom}
@@ -83,13 +80,11 @@ export default function HomePage() {
             </div>
           </div>
         ) : (
-          /* ----- 待機 / 接続完了 画面 ----- */
           <div className="bg-gray-900 p-6 rounded-2xl border border-gray-800 shadow-xl space-y-4">
             <p className="text-sm text-gray-400">
               あなたの役職: <span className="text-yellow-400 font-bold">{isHost ? 'Host (1P)' : 'Guest (2P)'}</span>
             </p>
 
-            {/* Host側の場合は自分のPeer IDを表示 */}
             {isHost && (
               <div className="p-3 bg-gray-800 rounded-xl border border-gray-700">
                 <p className="text-xs text-gray-400 mb-1">相手に伝える ルームID (Peer ID):</p>
@@ -99,13 +94,11 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* 接続状況に応じた表示 */}
             {isConnected ? (
               <div className="space-y-3">
                 <p className="text-emerald-400 font-bold animate-pulse">相手と接続されました！</p>
                 
                 {isHost ? (
-                  /* ホストのみ開始ボタンを表示 */
                   <button
                     onClick={handleStartGame}
                     className="w-full py-4 bg-gradient-to-r from-red-600 to-amber-600 font-black text-xl rounded-xl shadow-xl hover:brightness-110 active:scale-95 transition"
@@ -113,7 +106,6 @@ export default function HomePage() {
                     ⚔️ 対戦を開始する
                   </button>
                 ) : (
-                  /* ゲスト側はホストの開始を待つメッセージ */
                   <div className="p-4 bg-gray-800/80 rounded-xl border border-gray-700 text-yellow-300 font-bold animate-pulse">
                     ホストがゲームを開始するのを待っています...
                   </div>

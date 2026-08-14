@@ -30,7 +30,6 @@ export default function GamePage() {
     canvasRef.current?.placeBomb();
   }, []);
 
-  // リダイレクト処理中の画面ちらつき防止
   if (!isConnected && !role) {
     return null;
   }
@@ -52,7 +51,7 @@ export default function GamePage() {
         <GameCanvas ref={canvasRef} />
       </div>
 
-      {/* 操作エリア（爆弾ボタン ＋ バーチャルパッド） */}
+      {/* 操作エリア */}
       <div className="w-full max-w-md flex flex-col gap-3">
         <button
           onClick={handlePlaceBomb}
