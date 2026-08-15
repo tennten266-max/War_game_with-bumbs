@@ -14,6 +14,9 @@ export default function HomePage() {
   const {
     peerId,
     isConnected,
+    isConnecting,
+    connectionError,
+    setConnectionError,
     role,
     playerName,
     setPlayerName,
@@ -33,12 +36,14 @@ export default function HomePage() {
 
   // ルーム作成 (Host)
   const handleCreateRoom = () => {
+    setConnectionError(null);
     setIsHostCreated(true);
   };
 
   // ルーム参加 (Guest)
   const handleJoinRoom = () => {
     if (!inputHostId.trim()) return;
+    setConnectionError(null);
     connectToHost(inputHostId.trim());
   };
 
@@ -74,7 +79,7 @@ export default function HomePage() {
     return unsubscribe;
   }, [onMessage, router, setBombMode, setBombInterval]);
 
-  const isWaitingOrConnected = isHostCreated || isConnected || !!role;
+  const isWaitingOrConnected = (isHostCreated || isConnected || isConnecting || !!role) && !connectionError;
   const isHost = !role || role === 'host';
   const isGuest = role === 'guest';
 
@@ -88,6 +93,35 @@ export default function HomePage() {
           </h1>
           <p className="text-xs text-gray-400 font-medium">リアルタイム 2D 戦車爆弾バトル</p>
         </div>
+
+        {/* 接続エラー表示ボックス（10秒タイムアウト時・切断時等） */}
+        {connectionError && (
+          <div className="p-4 bg-red-950/90 border border-red-500/70 rounded-2xl text-red-200 text-xs space-y-3 shadow-xl animate-fade-in text-left backdrop-blur-md">
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl shrink-0">⚠️</span>
+              <div>
+                <p className="font-black text-red-300 text-sm mb-0.5">接続に失敗しました</p>
+                <p className="leading-relaxed text-red-200/90">{connectionError}</p>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleJoinRoom}
+                className="flex-1 py-2.5 bg-red-700 hover:bg-red-600 font-bold rounded-xl shadow transition active:scale-95 text-center text-xs text-white"
+              >
+                🔄 もう一度試す
+              </button>
+              <button
+                type="button"
+                onClick={handleLeaveRoom}
+                className="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold rounded-xl border border-gray-600 transition active:scale-95 text-center text-xs"
+              >
+                🏠 ホームに戻る
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* プレイヤー設定パネル（名前・爆弾モード・間隔） */}
         <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-4 text-left backdrop-blur-sm">
@@ -278,8 +312,8 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="flex items-center justify-center gap-2 text-gray-400 py-3 text-sm">
-                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <span>{isHost ? '相手の接続を待っています...' : 'ホストに接続中...'}</span>
+                <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                <span>{isHost ? '相手の接続を待っています...' : 'ホストに接続中... (最大10秒)'}</span>
               </div>
             )}
 

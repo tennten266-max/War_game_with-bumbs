@@ -8,6 +8,9 @@ import { Vector2D, ClientMessage, HostMessage, BombMode } from '@/types/game';
 interface WebRTCContextType {
   peerId: string;
   isConnected: boolean;
+  isConnecting: boolean;
+  connectionError: string | null;
+  setConnectionError: (err: string | null) => void;
   role: 'host' | 'guest' | null;
   playerName: string;
   setPlayerName: (name: string) => void;

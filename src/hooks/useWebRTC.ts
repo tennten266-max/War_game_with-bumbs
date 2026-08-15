@@ -6,9 +6,17 @@ import type Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import { ClientMessage, HostMessage, BombMode, GameMessage } from '@/types/game';
 
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+];
+
 export function useWebRTC() {
   const [peerId, setPeerId] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [role, setRole] = useState<'host' | 'guest' | null>(null);
 
   // プレイヤー設定
@@ -24,6 +32,8 @@ export function useWebRTC() {
   const connRef = useRef<DataConnection | null>(null);
   const roleRef = useRef<'host' | 'guest' | null>(null);
   const listenersRef = useRef<Set<(data: any) => void>>(new Set());
+  const connectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingQueueRef = useRef<(ClientMessage | HostMessage)[]>([]);
 
   const myInfoRef = useRef<{ name: string; bombMode: BombMode; bombInterval: number }>({
     name: 'プレイヤー',
@@ -106,25 +116,42 @@ export function useWebRTC() {
     }
   }, []);
 
+  const clearConnectTimeout = useCallback(() => {
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
+  }, []);
+
   const disconnect = useCallback(() => {
-    if (connRef.current && connRef.current.open) {
-      try {
-        connRef.current.send({ type: 'DISCONNECT' });
-      } catch {}
+    clearConnectTimeout();
+    if (connRef.current) {
+      if (connRef.current.open) {
+        try {
+          connRef.current.send({ type: 'DISCONNECT' });
+        } catch {}
+      }
       try {
         connRef.current.close();
       } catch {}
       connRef.current = null;
     }
     setIsConnected(false);
+    setIsConnecting(false);
     setRole(null);
     roleRef.current = null;
     setOpponentName('');
-  }, []);
+    setConnectionError(null);
+    pendingQueueRef.current = [];
+  }, [clearConnectTimeout]);
 
   const setupConnectionListeners = useCallback((conn: DataConnection) => {
     conn.on('open', () => {
+      clearConnectTimeout();
       setIsConnected(true);
+      setIsConnecting(false);
+      setConnectionError(null);
+
       // 接続確立時に自分の設定情報を相手に送信
       conn.send({
         type: 'PLAYER_INFO',
@@ -141,6 +168,14 @@ export function useWebRTC() {
           bombInterval: myInfoRef.current.bombInterval,
         });
       }
+
+      // 保留中のキューメッセージをフラッシュ
+      while (pendingQueueRef.current.length > 0) {
+        const msg = pendingQueueRef.current.shift();
+        if (msg) {
+          try { conn.send(msg); } catch {}
+        }
+      }
     });
 
     conn.on('data', (data: any) => {
@@ -151,6 +186,7 @@ export function useWebRTC() {
             connRef.current = null;
           }
           setIsConnected(false);
+          setIsConnecting(false);
           setRole(null);
           roleRef.current = null;
           setOpponentName('');
@@ -201,23 +237,35 @@ export function useWebRTC() {
     });
 
     conn.on('close', () => {
+      clearConnectTimeout();
       setIsConnected(false);
+      setIsConnecting(false);
       setRole(null);
       roleRef.current = null;
       setOpponentName('');
     });
 
     conn.on('error', (err) => {
-      console.error('Connection error:', err);
+      console.error('DataConnection error:', err);
+      clearConnectTimeout();
+      setIsConnecting(false);
+      setConnectionError('接続エラーが発生しました。再度お試しください。');
     });
-  }, []);
+  }, [clearConnectTimeout]);
 
+  // PeerJS インスタンス生成（Google STUN サーバー設定）
   useEffect(() => {
     let peerInstance: Peer | null = null;
 
     import('peerjs').then(({ default: Peer }) => {
       const randomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-      peerInstance = new Peer(randomId);
+      peerInstance = new Peer(randomId, {
+        config: {
+          iceServers: ICE_SERVERS,
+          iceCandidatePoolSize: 10,
+        },
+        debug: 1,
+      });
 
       peerInstance.on('open', (id) => {
         setPeerId(id);
@@ -230,16 +278,43 @@ export function useWebRTC() {
         setupConnectionListeners(conn);
       });
 
+      peerInstance.on('error', (err: any) => {
+        console.error('Peer error:', err);
+        if (err.type === 'peer-unavailable') {
+          clearConnectTimeout();
+          setIsConnecting(false);
+          setConnectionError('指定されたホスト（ルームID）が見つかりません。IDを確認してください。');
+        } else if (err.type === 'network' || err.type === 'server-error') {
+          setConnectionError('ネットワーク接続エラーが発生しました。');
+        }
+      });
+
       peerRef.current = peerInstance;
     });
 
     return () => {
+      clearConnectTimeout();
       peerInstance?.destroy();
     };
-  }, [setupConnectionListeners]);
+  }, [setupConnectionListeners, clearConnectTimeout]);
 
+  // ゲスト側の接続開始（10秒タイムアウト機能付き）
   const connectToHost = useCallback((hostId: string) => {
     if (!peerRef.current) return;
+
+    setConnectionError(null);
+    setIsConnecting(true);
+    clearConnectTimeout();
+
+    // 10秒接続タイムアウト
+    connectTimeoutRef.current = setTimeout(() => {
+      setIsConnecting(false);
+      setConnectionError('接続に失敗しました。もう一度試すか、同じWi-Fi環境でお試しください。');
+      if (connRef.current) {
+        try { connRef.current.close(); } catch {}
+        connRef.current = null;
+      }
+    }, 10000);
 
     const conn = peerRef.current.connect(hostId.toUpperCase(), {
       reliable: true,
@@ -249,7 +324,7 @@ export function useWebRTC() {
     setRole('guest');
     roleRef.current = 'guest';
     setupConnectionListeners(conn);
-  }, [setupConnectionListeners]);
+  }, [setupConnectionListeners, clearConnectTimeout]);
 
   const sendMessage = useCallback((data: ClientMessage | HostMessage) => {
     if (connRef.current && connRef.current.open) {
@@ -258,6 +333,9 @@ export function useWebRTC() {
       } catch (err) {
         console.error('Failed to send message:', err);
       }
+    } else {
+      // 接続準備中の場合はキューに蓄積
+      pendingQueueRef.current.push(data);
     }
   }, []);
 
@@ -271,6 +349,9 @@ export function useWebRTC() {
   return {
     peerId,
     isConnected,
+    isConnecting,
+    connectionError,
+    setConnectionError,
     role,
     playerName,
     setPlayerName,
