@@ -6,10 +6,11 @@ import { useRouter } from 'next/navigation';
 import GameCanvas, { GameCanvasHandle } from '@/components/GameCanvas';
 import VirtualPad from '@/components/VirtualPad';
 import { useWebRTCContext } from '@/context/WebRTCContext';
+import InfoModal from '@/components/InfoModal';
 
 export default function GamePage() {
   const router = useRouter();
-  const { role, isConnected, playerName, bombMode } = useWebRTCContext();
+  const { role, isConnected, playerName, bombMode, bombInterval } = useWebRTCContext();
   const canvasRef = useRef<GameCanvasHandle>(null);
 
   // 未接続で直接 /game に来た場合はトップページへリダイレクト
@@ -35,9 +36,10 @@ export default function GamePage() {
   }
 
   const isHost = !role || role === 'host';
+  const displayInterval = (bombInterval || 2.0).toFixed(1);
 
   return (
-    <main className="flex flex-col items-center justify-between h-[100dvh] max-h-[100dvh] bg-gray-950 text-white px-3 pt-2 pb-[max(2rem,env(safe-area-inset-bottom,28px))] select-none touch-none overflow-hidden">
+    <main className="flex flex-col items-center justify-between h-[100dvh] max-h-[100dvh] bg-gray-950 text-white px-3 pt-2 pb-[max(2rem,env(safe-area-inset-bottom,28px))] select-none touch-none overflow-hidden relative">
       {/* ヘッダー */}
       <header className="w-full max-w-md flex items-center justify-between py-2 px-3 bg-gray-900/70 border border-gray-800 rounded-xl shrink-0">
         <div>
@@ -58,7 +60,7 @@ export default function GamePage() {
                 : 'bg-blue-950/80 text-blue-300 border border-blue-600/40'
             }`}
           >
-            {bombMode === 'auto' ? '⏱️ 自動設置 (2秒)' : '🎮 手動設置'}
+            {bombMode === 'auto' ? `⏱️ 自動設置 (${displayInterval}s)` : '🎮 手動設置'}
           </span>
         </div>
       </header>
@@ -83,7 +85,7 @@ export default function GamePage() {
           <div className="w-full py-1.5 bg-amber-950/40 border border-amber-700/30 rounded-xl text-center">
             <p className="text-[11px] font-semibold text-amber-300 flex items-center justify-center gap-1">
               <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-ping mr-1"></span>
-              2秒ごとに自機位置へ自動で爆弾を設置中
+              {displayInterval}秒ごとに自機位置へ自動で爆弾を設置中
             </p>
           </div>
         )}
@@ -92,6 +94,9 @@ export default function GamePage() {
           <VirtualPad onMove={handlePadMove} radius={52} />
         </div>
       </div>
+
+      {/* 遊び方・ライセンス情報モーダル */}
+      <InfoModal />
     </main>
   );
 }

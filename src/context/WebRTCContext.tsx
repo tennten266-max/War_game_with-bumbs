@@ -13,8 +13,11 @@ interface WebRTCContextType {
   setPlayerName: (name: string) => void;
   bombMode: BombMode;
   setBombMode: (mode: BombMode) => void;
+  bombInterval: number;
+  setBombInterval: (interval: number) => void;
   opponentName: string;
   opponentBombMode: BombMode;
+  opponentBombInterval: number;
   connectToHost: (hostId: string) => void;
   disconnect: () => void;
   sendMessage: (data: ClientMessage | HostMessage) => void;

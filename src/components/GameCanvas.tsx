@@ -13,7 +13,17 @@ export interface GameCanvasHandle {
 
 const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
   const router = useRouter();
-  const { role, bombMode, playerName, opponentName, isConnected, sendMessage, onMessage } = useWebRTCContext();
+  const {
+    role,
+    bombMode,
+    bombInterval,
+    playerName,
+    opponentName,
+    isConnected,
+    disconnect,
+    sendMessage,
+    onMessage,
+  } = useWebRTCContext();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const currentRole = role || 'host';
@@ -92,10 +102,21 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       if (data.type === 'RETRY') {
         resetGame();
       }
+
+      // 相手がロビーへ戻った場合、自分も接続を維持したまま初期画面へ遷移
+      if (data.type === 'RETURN_TO_LOBBY') {
+        router.push('/');
+      }
+
+      // 相手が切断した場合
+      if (data.type === 'DISCONNECT') {
+        disconnect();
+        router.push('/');
+      }
     });
 
     return unsubscribe;
-  }, [onMessage, resetGame]);
+  }, [onMessage, resetGame, router, disconnect]);
 
   // 相手の切断・放置検知タイマー（10秒無通信・操作なしで判定）
   useEffect(() => {
@@ -197,28 +218,42 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     sendMessage({ type: 'PLACE_BOMB', bomb: newBomb });
   }, [currentRole, sendMessage, gameState, timeoutReason]);
 
-  // 自動設置モード（bombMode === 'auto'）: 2秒ごとに自動で自機位置に爆弾を設置
+  // 自動設置モード（bombMode === 'auto'）: 設定された秒数間隔（0.5s〜3.0s）ごとに自動で自機位置に爆弾を設置
   useEffect(() => {
     if (bombMode !== 'auto' || gameState !== 'PLAYING' || timeoutReason !== null) {
       return;
     }
 
+    const intervalMs = Math.max(500, Math.round((bombInterval || 2.0) * 1000));
     const intervalId = setInterval(() => {
       placeBomb();
-    }, 2000);
+    }, intervalMs);
 
     return () => {
       clearInterval(intervalId);
     };
-  }, [bombMode, gameState, placeBomb, timeoutReason]);
+  }, [bombMode, bombInterval, gameState, placeBomb, timeoutReason]);
 
-  // リトライ要求
+  // ① 同じルールで即時再戦
   const handleRetry = () => {
     resetGame();
     sendMessage({ type: 'RETRY' });
   };
 
+  // ② 設定を変えて再戦（ルーム接続は維持したままロビーに戻る）
+  const handleReturnToLobby = () => {
+    sendMessage({ type: 'RETURN_TO_LOBBY' });
+    router.push('/');
+  };
+
+  // ③ 部屋を解散してホームへ（WebRTC切断）
+  const handleLeaveGame = () => {
+    disconnect();
+    router.push('/');
+  };
+
   const handleReturnHome = () => {
+    disconnect();
     router.push('/');
   };
 
@@ -400,18 +435,46 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
           </div>
         )}
 
-        {/* 勝敗判定オーバーレイ（タイムアウト時は非表示） */}
+        {/* 勝敗判定リザルト画面（3つの選択肢） */}
         {!timeoutReason && gameState !== 'PLAYING' && (
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm rounded-xl flex flex-col items-center justify-center p-6 space-y-4 animate-fade-in z-10">
-            <h2 className={`text-4xl font-black ${gameState === 'WIN' ? 'text-yellow-400' : 'text-red-500'}`}>
-              {gameState === 'WIN' ? '🏆 VICTORY!' : '💀 DEFEAT...'}
-            </h2>
-            <button
-              onClick={handleRetry}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl shadow-lg transition active:scale-95"
-            >
-              もう一度対戦する
-            </button>
+          <div className="absolute inset-0 bg-black/85 backdrop-blur-md rounded-xl flex flex-col items-center justify-center p-6 space-y-4 animate-fade-in z-10 text-center">
+            <div className="space-y-1">
+              <h2 className={`text-4xl font-black ${gameState === 'WIN' ? 'text-yellow-400' : 'text-red-500'}`}>
+                {gameState === 'WIN' ? '🏆 VICTORY!' : '💀 DEFEAT...'}
+              </h2>
+              <p className="text-xs text-gray-400">
+                {gameState === 'WIN' ? 'お見事！勝利しました！' : '惜しい！次は勝とう！'}
+              </p>
+            </div>
+
+            <div className="w-full max-w-xs space-y-2.5 pt-2">
+              {/* ① 同じルールで即時再戦 */}
+              <button
+                onClick={handleRetry}
+                className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 font-black text-sm rounded-xl shadow-lg transition active:scale-95 flex items-center justify-center gap-2"
+              >
+                <span>🔄</span>
+                <span>同じルールで再戦</span>
+              </button>
+
+              {/* ② 設定を変えて再戦（ロビーに戻る） */}
+              <button
+                onClick={handleReturnToLobby}
+                className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 text-black font-extrabold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
+              >
+                <span>⚙️</span>
+                <span>設定を変えて再戦 (ロビーに戻る)</span>
+              </button>
+
+              {/* ③ 部屋を解散してホームへ */}
+              <button
+                onClick={handleLeaveGame}
+                className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white font-bold text-xs rounded-xl border border-gray-700 transition active:scale-95 flex items-center justify-center gap-2"
+              >
+                <span>🚪</span>
+                <span>部屋を解散してホームへ</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

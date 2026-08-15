@@ -14,15 +14,21 @@ export function useWebRTC() {
   // プレイヤー設定
   const [playerName, setPlayerNameState] = useState<string>('プレイヤー');
   const [bombMode, setBombModeState] = useState<BombMode>('manual');
+  const [bombInterval, setBombIntervalState] = useState<number>(2.0);
+
   const [opponentName, setOpponentName] = useState<string>('');
   const [opponentBombMode, setOpponentBombMode] = useState<BombMode>('manual');
+  const [opponentBombInterval, setOpponentBombInterval] = useState<number>(2.0);
 
   const peerRef = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null);
+  const roleRef = useRef<'host' | 'guest' | null>(null);
   const listenersRef = useRef<Set<(data: any) => void>>(new Set());
-  const myInfoRef = useRef<{ name: string; bombMode: BombMode }>({
+
+  const myInfoRef = useRef<{ name: string; bombMode: BombMode; bombInterval: number }>({
     name: 'プレイヤー',
     bombMode: 'manual',
+    bombInterval: 2.0,
   });
 
   // 初回マウント時にlocalStorageから設定を読み込み
@@ -37,6 +43,14 @@ export function useWebRTC() {
       if (savedMode === 'manual' || savedMode === 'auto') {
         setBombModeState(savedMode);
         myInfoRef.current.bombMode = savedMode;
+      }
+      const savedInterval = localStorage.getItem('tank_game_bomb_interval');
+      if (savedInterval) {
+        const parsed = parseFloat(savedInterval);
+        if (!isNaN(parsed) && parsed >= 0.5 && parsed <= 3.0) {
+          setBombIntervalState(parsed);
+          myInfoRef.current.bombInterval = parsed;
+        }
       }
     } catch {
       // localStorage unavailable (SSR/private mode)
@@ -55,6 +69,7 @@ export function useWebRTC() {
         type: 'PLAYER_INFO',
         name,
         bombMode: myInfoRef.current.bombMode,
+        bombInterval: myInfoRef.current.bombInterval,
       });
     }
   }, []);
@@ -65,23 +80,45 @@ export function useWebRTC() {
     try {
       localStorage.setItem('tank_game_bomb_mode', mode);
     } catch {}
-    // 接続済みなら相手に通知
+    // ホストとして接続中なら相手に設定変更を通知
     if (connRef.current && connRef.current.open) {
       connRef.current.send({
-        type: 'PLAYER_INFO',
-        name: myInfoRef.current.name,
+        type: 'ROOM_SETTINGS',
         bombMode: mode,
+        bombInterval: myInfoRef.current.bombInterval,
+      });
+    }
+  }, []);
+
+  const setBombInterval = useCallback((interval: number) => {
+    setBombIntervalState(interval);
+    myInfoRef.current.bombInterval = interval;
+    try {
+      localStorage.setItem('tank_game_bomb_interval', interval.toString());
+    } catch {}
+    // ホストとして接続中なら相手に設定変更を通知
+    if (connRef.current && connRef.current.open) {
+      connRef.current.send({
+        type: 'ROOM_SETTINGS',
+        bombMode: myInfoRef.current.bombMode,
+        bombInterval: interval,
       });
     }
   }, []);
 
   const disconnect = useCallback(() => {
-    if (connRef.current) {
-      connRef.current.close();
+    if (connRef.current && connRef.current.open) {
+      try {
+        connRef.current.send({ type: 'DISCONNECT' });
+      } catch {}
+      try {
+        connRef.current.close();
+      } catch {}
       connRef.current = null;
     }
     setIsConnected(false);
     setRole(null);
+    roleRef.current = null;
     setOpponentName('');
   }, []);
 
@@ -93,23 +130,62 @@ export function useWebRTC() {
         type: 'PLAYER_INFO',
         name: myInfoRef.current.name,
         bombMode: myInfoRef.current.bombMode,
+        bombInterval: myInfoRef.current.bombInterval,
       });
+
+      // ホストであれば部屋のルールも確実に送信
+      if (roleRef.current === 'host') {
+        conn.send({
+          type: 'ROOM_SETTINGS',
+          bombMode: myInfoRef.current.bombMode,
+          bombInterval: myInfoRef.current.bombInterval,
+        });
+      }
     });
 
     conn.on('data', (data: any) => {
       if (data && typeof data === 'object') {
+        if (data.type === 'DISCONNECT') {
+          if (connRef.current) {
+            try { connRef.current.close(); } catch {}
+            connRef.current = null;
+          }
+          setIsConnected(false);
+          setRole(null);
+          roleRef.current = null;
+          setOpponentName('');
+        }
+
         if (data.type === 'PLAYER_INFO') {
           if (typeof data.name === 'string') setOpponentName(data.name);
           if (data.bombMode === 'manual' || data.bombMode === 'auto') {
             setOpponentBombMode(data.bombMode);
           }
+          if (typeof data.bombInterval === 'number') {
+            setOpponentBombInterval(data.bombInterval);
+          }
+          // ゲスト側であれば、ホストのPLAYER_INFOからルールも同期
+          if (roleRef.current === 'guest') {
+            if (data.bombMode === 'manual' || data.bombMode === 'auto') {
+              setBombModeState(data.bombMode);
+              myInfoRef.current.bombMode = data.bombMode;
+            }
+            if (typeof data.bombInterval === 'number') {
+              setBombIntervalState(data.bombInterval);
+              myInfoRef.current.bombInterval = data.bombInterval;
+            }
+          }
         }
 
-        // ホストからの設定メッセージまたはSTART_GAME時にゲスト側のbombModeを強制同期
-        if (data.type === 'HOST_CONFIG' || data.type === 'START_GAME') {
+        // ホストからの設定メッセージまたはSTART_GAME時にゲスト側の設定を強制同期
+        if (data.type === 'ROOM_SETTINGS' || data.type === 'HOST_CONFIG' || data.type === 'START_GAME') {
           if (data.bombMode === 'manual' || data.bombMode === 'auto') {
             setBombModeState(data.bombMode);
             myInfoRef.current.bombMode = data.bombMode;
+          }
+          if (typeof data.bombInterval === 'number') {
+            setBombIntervalState(data.bombInterval);
+            myInfoRef.current.bombInterval = data.bombInterval;
           }
         }
       }
@@ -126,6 +202,8 @@ export function useWebRTC() {
 
     conn.on('close', () => {
       setIsConnected(false);
+      setRole(null);
+      roleRef.current = null;
       setOpponentName('');
     });
 
@@ -148,6 +226,7 @@ export function useWebRTC() {
       peerInstance.on('connection', (conn) => {
         connRef.current = conn;
         setRole('host');
+        roleRef.current = 'host';
         setupConnectionListeners(conn);
       });
 
@@ -168,6 +247,7 @@ export function useWebRTC() {
 
     connRef.current = conn;
     setRole('guest');
+    roleRef.current = 'guest';
     setupConnectionListeners(conn);
   }, [setupConnectionListeners]);
 
@@ -196,8 +276,11 @@ export function useWebRTC() {
     setPlayerName,
     bombMode,
     setBombMode,
+    bombInterval,
+    setBombInterval,
     opponentName,
     opponentBombMode,
+    opponentBombInterval,
     connectToHost,
     disconnect,
     sendMessage,

@@ -5,6 +5,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWebRTCContext } from '@/context/WebRTCContext';
 import { GameMessage, BombMode } from '@/types/game';
+import InfoModal from '@/components/InfoModal';
+
+const INTERVAL_OPTIONS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
 
 export default function HomePage() {
   const router = useRouter();
@@ -16,6 +19,8 @@ export default function HomePage() {
     setPlayerName,
     bombMode,
     setBombMode,
+    bombInterval,
+    setBombInterval,
     opponentName,
     connectToHost,
     disconnect,
@@ -46,7 +51,7 @@ export default function HomePage() {
 
   // ホストが「対戦を開始する」を押した時
   const handleStartGame = () => {
-    sendMessage({ type: 'START_GAME', bombMode });
+    sendMessage({ type: 'START_GAME', bombMode, bombInterval });
     // データチャネルへの送信完了を確実にするため少し遅延を入れて遷移
     setTimeout(() => {
       router.push('/game');
@@ -60,19 +65,22 @@ export default function HomePage() {
         if (data.bombMode) {
           setBombMode(data.bombMode);
         }
+        if (typeof data.bombInterval === 'number') {
+          setBombInterval(data.bombInterval);
+        }
         router.push('/game');
       }
     });
     return unsubscribe;
-  }, [onMessage, router, setBombMode]);
+  }, [onMessage, router, setBombMode, setBombInterval]);
 
   const isWaitingOrConnected = isHostCreated || isConnected || !!role;
   const isHost = !role || role === 'host';
   const isGuest = role === 'guest';
 
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white p-4 select-none">
-      <div className="w-full max-w-md space-y-5 text-center">
+    <main className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white p-4 select-none relative">
+      <div className="w-full max-w-md space-y-5 text-center my-auto pb-12">
         {/* タイトルロゴ */}
         <div className="space-y-1">
           <h1 className="text-4xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-amber-300 to-red-500">
@@ -81,15 +89,15 @@ export default function HomePage() {
           <p className="text-xs text-gray-400 font-medium">リアルタイム 2D 戦車爆弾バトル</p>
         </div>
 
-        {/* プレイヤー設定パネル（名前・爆弾モード） */}
+        {/* プレイヤー設定パネル（名前・爆弾モード・間隔） */}
         <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-4 text-left backdrop-blur-sm">
           <h2 className="text-sm font-bold text-gray-300 flex items-center justify-between">
             <span className="flex items-center gap-2">
-              <span>⚙️</span> プレイヤー設定
+              <span>⚙️</span> プレイヤー・ルール設定
             </span>
             {isGuest && (
               <span className="text-[10px] text-amber-400 font-normal bg-amber-950/60 border border-amber-600/30 px-2 py-0.5 rounded-full">
-                👑 爆弾モードはホスト設定に同期
+                👑 ルールはホストに同期中
               </span>
             )}
           </h2>
@@ -110,7 +118,7 @@ export default function HomePage() {
           </div>
 
           {/* 爆弾設置モード選択 */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-xs font-semibold text-gray-400 block">
                 爆弾の設置モード {isGuest ? '(ホスト側で指定)' : ''}
@@ -125,7 +133,7 @@ export default function HomePage() {
                   bombMode === 'manual'
                     ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm shadow-blue-500/20'
                     : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-                } ${isGuest ? 'opacity-70 cursor-not-allowed' : ''}`}
+                } ${isGuest ? 'opacity-75 cursor-not-allowed' : ''}`}
               >
                 <span className="text-lg mb-0.5">🎮</span>
                 <span className="text-xs font-bold">手動設置</span>
@@ -140,13 +148,45 @@ export default function HomePage() {
                   bombMode === 'auto'
                     ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-sm shadow-amber-500/20'
                     : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-                } ${isGuest ? 'opacity-70 cursor-not-allowed' : ''}`}
+                } ${isGuest ? 'opacity-75 cursor-not-allowed' : ''}`}
               >
                 <span className="text-lg mb-0.5">⏱️</span>
                 <span className="text-xs font-bold">自動設置</span>
-                <span className="text-[10px] text-gray-400 mt-0.5">2秒ごとに自動</span>
+                <span className="text-[10px] text-gray-400 mt-0.5">一定間隔で自動投下</span>
               </button>
             </div>
+
+            {/* 自動設置モード時の秒数間隔選択（0.5秒〜3.0秒） */}
+            {bombMode === 'auto' && (
+              <div className="pt-2 border-t border-gray-800/80 space-y-1.5 animate-fade-in">
+                <div className="flex justify-between items-center">
+                  <label className="text-[11px] font-semibold text-gray-400">
+                    自動設置の間隔（秒数）
+                  </label>
+                  <span className="text-xs font-extrabold text-amber-400">
+                    {bombInterval.toFixed(1)} 秒ごと
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-6 gap-1.5">
+                  {INTERVAL_OPTIONS.map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      disabled={isGuest}
+                      onClick={() => setBombInterval(val)}
+                      className={`py-1.5 text-xs font-bold rounded-lg border transition ${
+                        bombInterval === val
+                          ? 'bg-amber-500 border-amber-400 text-black shadow-md'
+                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                      } ${isGuest ? 'opacity-75 cursor-not-allowed' : ''}`}
+                    >
+                      {val.toFixed(1)}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -214,7 +254,12 @@ export default function HomePage() {
                     </p>
                   )}
                   <p className="text-[11px] text-gray-300 mt-1">
-                    適用ルール: <span className="font-bold text-amber-300">{bombMode === 'auto' ? '⏱️ 2秒自動設置' : '🎮 手動ボタン設置'}</span>
+                    適用ルール:{' '}
+                    <span className="font-bold text-amber-300">
+                      {bombMode === 'auto'
+                        ? `⏱️ 自動設置 (${bombInterval.toFixed(1)}秒間隔)`
+                        : '🎮 手動ボタン設置'}
+                    </span>
                   </p>
                 </div>
 
@@ -252,6 +297,9 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {/* 遊び方・ライセンス情報モーダルボタン */}
+      <InfoModal />
     </main>
   );
 }
