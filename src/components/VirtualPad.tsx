@@ -13,7 +13,7 @@ interface VirtualPadProps {
   radius?: number; // パッドの半径 (px)
 }
 
-export default function VirtualPad({ onMove, radius = 60 }: VirtualPadProps) {
+export default function VirtualPad({ onMove, radius = 55 }: VirtualPadProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [touchPos, setTouchPos] = useState<{ x: number; y: number } | null>(null);
   const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -25,8 +25,8 @@ export default function VirtualPad({ onMove, radius = 60 }: VirtualPadProps) {
     active: false,
   });
 
-  // 指の移動処理
-  const handleTouch = useCallback(
+  // 指・マウスの移動処理
+  const handleMove = useCallback(
     (clientX: number, clientY: number) => {
       if (!touchPos) return;
 
@@ -52,27 +52,44 @@ export default function VirtualPad({ onMove, radius = 60 }: VirtualPadProps) {
     [touchPos, radius]
   );
 
-  // タッチ開始（タップした場所を中心に設定）
+  // タッチ開始
   const handleTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation();
     const touch = e.touches[0];
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const startX = touch.clientX;
-    const startY = touch.clientY;
-
-    setTouchPos({ x: startX, y: startY });
+    setTouchPos({ x: touch.clientX, y: touch.clientY });
     setKnobPos({ x: 0, y: 0 });
     currentVector.current = { x: 0, y: 0, active: true };
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    e.stopPropagation();
     if (!touchPos) return;
     const touch = e.touches[0];
-    handleTouch(touch.clientX, touch.clientY);
+    handleMove(touch.clientX, touch.clientY);
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    setTouchPos(null);
+    setKnobPos({ x: 0, y: 0 });
+    currentVector.current = { x: 0, y: 0, active: false };
+    onMove({ x: 0, y: 0, active: false });
+  };
+
+  // マウス操作（PCブラウザ用フォールバック）
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setTouchPos({ x: e.clientX, y: e.clientY });
+    setKnobPos({ x: 0, y: 0 });
+    currentVector.current = { x: 0, y: 0, active: true };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!touchPos) return;
+    handleMove(e.clientX, e.clientY);
+  };
+
+  const handleMouseUp = () => {
+    if (!touchPos) return;
     setTouchPos(null);
     setKnobPos({ x: 0, y: 0 });
     currentVector.current = { x: 0, y: 0, active: false };
@@ -101,19 +118,34 @@ export default function VirtualPad({ onMove, radius = 60 }: VirtualPadProps) {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchEnd}
-      className="relative w-full h-full touch-none select-none overflow-hidden flex items-center justify-center bg-gray-950/30"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      className="relative w-full h-full touch-none select-none overflow-hidden flex items-center justify-center bg-gray-950/40 cursor-grab active:cursor-grabbing"
+      style={{ touchAction: 'none' }}
     >
-      {/* タッチ中の固定・表示用案内 */}
+      {/* 非タッチ時のガイドサークル */}
       {!touchPos && (
-        <p className="text-gray-500 text-xs text-center pointer-events-none animate-pulse">
-          画面のどこかをタッチ＆スライドして移動
-        </p>
+        <div className="flex flex-col items-center justify-center pointer-events-none gap-1 opacity-70">
+          <div
+            className="rounded-full border border-dashed border-gray-600 flex items-center justify-center bg-gray-900/30"
+            style={{ width: radius * 1.8, height: radius * 1.8 }}
+          >
+            <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-400/40 flex items-center justify-center text-blue-400 text-xs">
+              🕹️
+            </div>
+          </div>
+          <p className="text-gray-400 text-[10px] text-center font-medium">
+            タッチ＆スライドして戦車を移動
+          </p>
+        </div>
       )}
 
-      {/* タッチした位置に出現する円形ジョイスティック */}
+      {/* タッチ中のジョイスティック */}
       {touchPos && (
         <div
-          className="fixed pointer-events-none rounded-full border-2 border-white/30 bg-black/40 backdrop-blur-sm transition-opacity duration-150"
+          className="fixed pointer-events-none rounded-full border-2 border-blue-400/40 bg-gray-950/70 backdrop-blur-sm z-30 shadow-2xl transition-opacity"
           style={{
             width: radius * 2,
             height: radius * 2,
@@ -122,11 +154,14 @@ export default function VirtualPad({ onMove, radius = 60 }: VirtualPadProps) {
           }}
         >
           {/* 中心軸マーク */}
-          <div className="absolute inset-0 m-auto w-2 h-2 rounded-full bg-white/20" />
+          <div className="absolute inset-0 m-auto w-2.5 h-2.5 rounded-full bg-white/30" />
+
+          {/* 移動可能エリアリング */}
+          <div className="absolute inset-2 rounded-full border border-blue-500/20" />
 
           {/* 指で動くスティック（つまみ） */}
           <div
-            className="absolute top-1/2 left-1/2 w-10 h-10 -mt-5 -ml-5 rounded-full bg-blue-500/80 border-2 border-blue-300 shadow-lg shadow-blue-500/50"
+            className="absolute top-1/2 left-1/2 w-11 h-11 -mt-5.5 -ml-5.5 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 border-2 border-blue-300 shadow-lg shadow-blue-500/60"
             style={{
               transform: `translate(${knobPos.x}px, ${knobPos.y}px)`,
             }}

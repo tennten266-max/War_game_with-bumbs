@@ -24,12 +24,15 @@ export interface Explosion {
   duration: number;
 }
 
+export type BombMode = 'manual' | 'auto';
+
 export type GameMessage =
   | { type: 'START_GAME' }
   | { type: 'MOVE'; role: 'host' | 'guest'; pos: Vector2D }
   | { type: 'PLACE_BOMB'; bomb: Bomb }
   | { type: 'DAMAGE'; targetRole: 'host' | 'guest' }
-  | { type: 'RETRY' };
+  | { type: 'RETRY' }
+  | { type: 'PLAYER_INFO'; name: string; bombMode: BombMode };
 
 // 既存互換用型定義
 export type ClientMessage = GameMessage;

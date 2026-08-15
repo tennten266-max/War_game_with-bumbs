@@ -3,15 +3,21 @@
 
 import React, { createContext, useContext } from 'react';
 import { useWebRTC } from '@/hooks/useWebRTC';
-import { Vector2D, ClientMessage, HostMessage } from '@/types/game';
+import { Vector2D, ClientMessage, HostMessage, BombMode } from '@/types/game';
 
 interface WebRTCContextType {
   peerId: string;
   isConnected: boolean;
   role: 'host' | 'guest' | null;
+  playerName: string;
+  setPlayerName: (name: string) => void;
+  bombMode: BombMode;
+  setBombMode: (mode: BombMode) => void;
+  opponentName: string;
+  opponentBombMode: BombMode;
   connectToHost: (hostId: string) => void;
   sendMessage: (data: ClientMessage | HostMessage) => void;
-  onMessage: (callback: (data: any) => void) => void;
+  onMessage: (callback: (data: any) => void) => () => void;
 }
 
 const WebRTCContext = createContext<WebRTCContextType | null>(null);

@@ -4,11 +4,24 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWebRTCContext } from '@/context/WebRTCContext';
-import { GameMessage } from '@/types/game';
+import { GameMessage, BombMode } from '@/types/game';
 
 export default function HomePage() {
   const router = useRouter();
-  const { peerId, isConnected, role, connectToHost, sendMessage, onMessage } = useWebRTCContext();
+  const {
+    peerId,
+    isConnected,
+    role,
+    playerName,
+    setPlayerName,
+    bombMode,
+    setBombMode,
+    opponentName,
+    connectToHost,
+    sendMessage,
+    onMessage,
+  } = useWebRTCContext();
+
   const [inputHostId, setInputHostId] = useState('');
   const [isHostCreated, setIsHostCreated] = useState(false);
 
@@ -26,40 +39,108 @@ export default function HomePage() {
   // ホストが「対戦を開始する」を押した時
   const handleStartGame = () => {
     sendMessage({ type: 'START_GAME' });
-    router.push('/game');
+    // データチャネルへの送信完了を確実にするため少し遅延を入れて遷移
+    setTimeout(() => {
+      router.push('/game');
+    }, 50);
   };
 
   // ゲスト側：ホストからの START_GAME を受信して自動遷移
   useEffect(() => {
-    onMessage((data: GameMessage) => {
-      if (data.type === 'START_GAME') {
+    const unsubscribe = onMessage((data: GameMessage) => {
+      if (data && data.type === 'START_GAME') {
         router.push('/game');
       }
     });
+    return unsubscribe;
   }, [onMessage, router]);
 
   const isWaitingOrConnected = isHostCreated || isConnected || !!role;
   const isHost = !role || role === 'host';
 
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white p-6 select-none">
-      <div className="w-full max-w-md space-y-6 text-center">
-        <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-red-500">
-          BOMB BATTLE 2D
-        </h1>
+    <main className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white p-4 select-none">
+      <div className="w-full max-w-md space-y-5 text-center">
+        {/* タイトルロゴ */}
+        <div className="space-y-1">
+          <h1 className="text-4xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-amber-300 to-red-500">
+            BOMB BATTLE 2D
+          </h1>
+          <p className="text-xs text-gray-400 font-medium">リアルタイム 2D 戦車爆弾バトル</p>
+        </div>
 
+        {/* プレイヤー設定パネル（名前・爆弾モード） */}
+        <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-4 text-left backdrop-blur-sm">
+          <h2 className="text-sm font-bold text-gray-300 flex items-center gap-2">
+            <span>⚙️</span> プレイヤー設定
+          </h2>
+
+          {/* ユーザー名入力 */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-gray-400 block">
+              プレイヤー名
+            </label>
+            <input
+              type="text"
+              maxLength={12}
+              placeholder="プレイヤー名を入力"
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-white font-bold text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+            />
+          </div>
+
+          {/* 爆弾設置モード選択 */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-gray-400 block">
+              爆弾の設置モード
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setBombMode('manual')}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
+                  bombMode === 'manual'
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm shadow-blue-500/20'
+                    : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                }`}
+              >
+                <span className="text-lg mb-0.5">🎮</span>
+                <span className="text-xs font-bold">手動設置</span>
+                <span className="text-[10px] text-gray-400 mt-0.5">ボタンで投下</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBombMode('auto')}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
+                  bombMode === 'auto'
+                    ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-sm shadow-amber-500/20'
+                    : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                }`}
+              >
+                <span className="text-lg mb-0.5">⏱️</span>
+                <span className="text-xs font-bold">自動設置</span>
+                <span className="text-[10px] text-gray-400 mt-0.5">2秒ごとに自動</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ルーム作成・参加セクション */}
         {!isWaitingOrConnected ? (
-          <div className="space-y-4 bg-gray-900 p-6 rounded-2xl border border-gray-800 shadow-xl">
+          <div className="space-y-4 bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl backdrop-blur-sm">
             <button
               onClick={handleCreateRoom}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl shadow-lg transition active:scale-95"
+              className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl shadow-lg transition active:scale-[0.98] flex items-center justify-center gap-2"
             >
-              部屋を作成する (1P / Host)
+              <span>👑</span>
+              <span>部屋を作成する (1P / Host)</span>
             </button>
 
-            <div className="flex items-center my-4">
+            <div className="flex items-center my-3">
               <div className="flex-1 border-t border-gray-800"></div>
-              <span className="px-3 text-xs text-gray-500 font-bold">OR</span>
+              <span className="px-3 text-xs text-gray-500 font-bold">または</span>
               <div className="flex-1 border-t border-gray-800"></div>
             </div>
 
@@ -68,51 +149,64 @@ export default function HomePage() {
                 type="text"
                 placeholder="ホストのPeer IDを入力"
                 value={inputHostId}
-                onChange={(e) => setInputHostId(e.target.value)}
-                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-center text-lg font-mono focus:outline-none focus:border-blue-500"
+                onChange={(e) => setInputHostId(e.target.value.toUpperCase())}
+                className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-center text-base font-mono uppercase focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
               />
               <button
                 onClick={handleJoinRoom}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 font-bold rounded-xl shadow-lg transition active:scale-95"
+                disabled={!inputHostId.trim()}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-800 disabled:text-gray-500 font-bold rounded-xl shadow-lg transition active:scale-[0.98] flex items-center justify-center gap-2"
               >
-                部屋に参加する (2P / Guest)
+                <span>⚔️</span>
+                <span>部屋に参加する (2P / Guest)</span>
               </button>
             </div>
           </div>
         ) : (
-          <div className="bg-gray-900 p-6 rounded-2xl border border-gray-800 shadow-xl space-y-4">
-            <p className="text-sm text-gray-400">
-              あなたの役職: <span className="text-yellow-400 font-bold">{isHost ? 'Host (1P)' : 'Guest (2P)'}</span>
-            </p>
+          <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-4 text-center backdrop-blur-sm">
+            <div className="flex justify-between items-center bg-gray-800/80 px-3 py-2 rounded-xl text-xs">
+              <span className="text-gray-400">あなたの役職:</span>
+              <span className="text-yellow-400 font-bold">
+                {isHost ? 'Host (1P: 青)' : 'Guest (2P: 赤)'}
+              </span>
+            </div>
 
             {isHost && (
-              <div className="p-3 bg-gray-800 rounded-xl border border-gray-700">
+              <div className="p-3 bg-gray-800/80 rounded-xl border border-gray-700">
                 <p className="text-xs text-gray-400 mb-1">相手に伝える ルームID (Peer ID):</p>
-                <p className="text-xl font-mono font-bold text-blue-400 select-all break-all">
+                <p className="text-2xl font-mono font-black text-blue-400 tracking-wider select-all break-all">
                   {peerId || 'ID生成中...'}
                 </p>
+                <p className="text-[10px] text-gray-500 mt-1">タップまたは選択してコピー</p>
               </div>
             )}
 
             {isConnected ? (
               <div className="space-y-3">
-                <p className="text-emerald-400 font-bold animate-pulse">相手と接続されました！</p>
-                
+                <div className="p-3 bg-emerald-950/60 border border-emerald-600/40 rounded-xl text-emerald-400 font-bold text-sm">
+                  ✓ 相手と接続されました！
+                  {opponentName && (
+                    <p className="text-xs text-emerald-300 font-normal mt-0.5">
+                      対戦相手: <span className="font-bold text-white">{opponentName}</span>
+                    </p>
+                  )}
+                </div>
+
                 {isHost ? (
                   <button
                     onClick={handleStartGame}
-                    className="w-full py-4 bg-gradient-to-r from-red-600 to-amber-600 font-black text-xl rounded-xl shadow-xl hover:brightness-110 active:scale-95 transition"
+                    className="w-full py-4 bg-gradient-to-r from-red-600 to-amber-600 font-black text-xl rounded-xl shadow-xl hover:brightness-110 active:scale-[0.98] transition"
                   >
                     ⚔️ 対戦を開始する
                   </button>
                 ) : (
-                  <div className="p-4 bg-gray-800/80 rounded-xl border border-gray-700 text-yellow-300 font-bold animate-pulse">
+                  <div className="p-3.5 bg-gray-800/80 rounded-xl border border-gray-700 text-yellow-300 text-sm font-bold animate-pulse">
                     ホストがゲームを開始するのを待っています...
                   </div>
                 )}
               </div>
             ) : (
-              <div className="flex items-center justify-center gap-2 text-gray-400 py-4">
+              <div className="flex items-center justify-center gap-2 text-gray-400 py-3 text-sm">
                 <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                 <span>{isHost ? '相手の接続を待っています...' : 'ホストに接続中...'}</span>
               </div>
