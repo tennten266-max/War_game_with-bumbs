@@ -77,7 +77,11 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       }
 
       if (data.type === 'PLACE_BOMB') {
-        bombsRef.current.push(data.bomb);
+        // 端末間の時計のズレによる即時爆発を防ぐため、受信側ローカル時刻で起算
+        bombsRef.current.push({
+          ...data.bomb,
+          createdAt: Date.now(),
+        });
       }
 
       if (data.type === 'DAMAGE') {

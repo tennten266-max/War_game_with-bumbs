@@ -18,6 +18,7 @@ export default function HomePage() {
     setBombMode,
     opponentName,
     connectToHost,
+    disconnect,
     sendMessage,
     onMessage,
   } = useWebRTCContext();
@@ -36,9 +37,16 @@ export default function HomePage() {
     connectToHost(inputHostId.trim());
   };
 
+  // 退出 / キャンセル（初期画面へ戻る）
+  const handleLeaveRoom = () => {
+    disconnect();
+    setIsHostCreated(false);
+    setInputHostId('');
+  };
+
   // ホストが「対戦を開始する」を押した時
   const handleStartGame = () => {
-    sendMessage({ type: 'START_GAME' });
+    sendMessage({ type: 'START_GAME', bombMode });
     // データチャネルへの送信完了を確実にするため少し遅延を入れて遷移
     setTimeout(() => {
       router.push('/game');
@@ -49,14 +57,18 @@ export default function HomePage() {
   useEffect(() => {
     const unsubscribe = onMessage((data: GameMessage) => {
       if (data && data.type === 'START_GAME') {
+        if (data.bombMode) {
+          setBombMode(data.bombMode);
+        }
         router.push('/game');
       }
     });
     return unsubscribe;
-  }, [onMessage, router]);
+  }, [onMessage, router, setBombMode]);
 
   const isWaitingOrConnected = isHostCreated || isConnected || !!role;
   const isHost = !role || role === 'host';
+  const isGuest = role === 'guest';
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white p-4 select-none">
@@ -71,8 +83,15 @@ export default function HomePage() {
 
         {/* プレイヤー設定パネル（名前・爆弾モード） */}
         <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-4 text-left backdrop-blur-sm">
-          <h2 className="text-sm font-bold text-gray-300 flex items-center gap-2">
-            <span>⚙️</span> プレイヤー設定
+          <h2 className="text-sm font-bold text-gray-300 flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <span>⚙️</span> プレイヤー設定
+            </span>
+            {isGuest && (
+              <span className="text-[10px] text-amber-400 font-normal bg-amber-950/60 border border-amber-600/30 px-2 py-0.5 rounded-full">
+                👑 爆弾モードはホスト設定に同期
+              </span>
+            )}
           </h2>
 
           {/* ユーザー名入力 */}
@@ -92,18 +111,21 @@ export default function HomePage() {
 
           {/* 爆弾設置モード選択 */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-gray-400 block">
-              爆弾の設置モード
-            </label>
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-semibold text-gray-400 block">
+                爆弾の設置モード {isGuest ? '(ホスト側で指定)' : ''}
+              </label>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
+                disabled={isGuest}
                 onClick={() => setBombMode('manual')}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
                   bombMode === 'manual'
                     ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm shadow-blue-500/20'
                     : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-                }`}
+                } ${isGuest ? 'opacity-70 cursor-not-allowed' : ''}`}
               >
                 <span className="text-lg mb-0.5">🎮</span>
                 <span className="text-xs font-bold">手動設置</span>
@@ -112,12 +134,13 @@ export default function HomePage() {
 
               <button
                 type="button"
+                disabled={isGuest}
                 onClick={() => setBombMode('auto')}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
                   bombMode === 'auto'
                     ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-sm shadow-amber-500/20'
                     : 'bg-gray-800/60 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-                }`}
+                } ${isGuest ? 'opacity-70 cursor-not-allowed' : ''}`}
               >
                 <span className="text-lg mb-0.5">⏱️</span>
                 <span className="text-xs font-bold">自動設置</span>
@@ -190,6 +213,9 @@ export default function HomePage() {
                       対戦相手: <span className="font-bold text-white">{opponentName}</span>
                     </p>
                   )}
+                  <p className="text-[11px] text-gray-300 mt-1">
+                    適用ルール: <span className="font-bold text-amber-300">{bombMode === 'auto' ? '⏱️ 2秒自動設置' : '🎮 手動ボタン設置'}</span>
+                  </p>
                 </div>
 
                 {isHost ? (
@@ -211,6 +237,18 @@ export default function HomePage() {
                 <span>{isHost ? '相手の接続を待っています...' : 'ホストに接続中...'}</span>
               </div>
             )}
+
+            {/* ホームに戻る（退出・キャンセル）ボタン */}
+            <div className="pt-2 border-t border-gray-800/80">
+              <button
+                type="button"
+                onClick={handleLeaveRoom}
+                className="w-full py-2.5 bg-gray-800/90 hover:bg-gray-800 text-gray-400 hover:text-white text-xs font-semibold rounded-xl border border-gray-700/60 transition active:scale-95 flex items-center justify-center gap-1.5"
+              >
+                <span>🏠</span>
+                <span>{isGuest ? '部屋を退出して戻る' : '部屋を解散して戻る'}</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

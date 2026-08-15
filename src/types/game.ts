@@ -27,7 +27,8 @@ export interface Explosion {
 export type BombMode = 'manual' | 'auto';
 
 export type GameMessage =
-  | { type: 'START_GAME' }
+  | { type: 'START_GAME'; bombMode?: BombMode }
+  | { type: 'HOST_CONFIG'; bombMode: BombMode }
   | { type: 'MOVE'; role: 'host' | 'guest'; pos: Vector2D }
   | { type: 'PLACE_BOMB'; bomb: Bomb }
   | { type: 'DAMAGE'; targetRole: 'host' | 'guest' }

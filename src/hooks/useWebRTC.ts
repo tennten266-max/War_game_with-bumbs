@@ -75,6 +75,16 @@ export function useWebRTC() {
     }
   }, []);
 
+  const disconnect = useCallback(() => {
+    if (connRef.current) {
+      connRef.current.close();
+      connRef.current = null;
+    }
+    setIsConnected(false);
+    setRole(null);
+    setOpponentName('');
+  }, []);
+
   const setupConnectionListeners = useCallback((conn: DataConnection) => {
     conn.on('open', () => {
       setIsConnected(true);
@@ -87,12 +97,23 @@ export function useWebRTC() {
     });
 
     conn.on('data', (data: any) => {
-      if (data && typeof data === 'object' && data.type === 'PLAYER_INFO') {
-        if (typeof data.name === 'string') setOpponentName(data.name);
-        if (data.bombMode === 'manual' || data.bombMode === 'auto') {
-          setOpponentBombMode(data.bombMode);
+      if (data && typeof data === 'object') {
+        if (data.type === 'PLAYER_INFO') {
+          if (typeof data.name === 'string') setOpponentName(data.name);
+          if (data.bombMode === 'manual' || data.bombMode === 'auto') {
+            setOpponentBombMode(data.bombMode);
+          }
+        }
+
+        // ホストからの設定メッセージまたはSTART_GAME時にゲスト側のbombModeを強制同期
+        if (data.type === 'HOST_CONFIG' || data.type === 'START_GAME') {
+          if (data.bombMode === 'manual' || data.bombMode === 'auto') {
+            setBombModeState(data.bombMode);
+            myInfoRef.current.bombMode = data.bombMode;
+          }
         }
       }
+
       // 登録されている全リスナーに通知
       listenersRef.current.forEach((listener) => {
         try {
@@ -178,6 +199,7 @@ export function useWebRTC() {
     opponentName,
     opponentBombMode,
     connectToHost,
+    disconnect,
     sendMessage,
     onMessage,
   };
