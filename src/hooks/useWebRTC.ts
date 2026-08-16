@@ -25,6 +25,7 @@ export function useWebRTC() {
   const [peerId, setPeerId] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [connectingStatus, setConnectingStatus] = useState<string>('');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [role, setRole] = useState<'host' | 'guest' | null>(null);
 
@@ -41,7 +42,13 @@ export function useWebRTC() {
   const connRef = useRef<DataConnection | null>(null);
   const roleRef = useRef<'host' | 'guest' | null>(null);
   const listenersRef = useRef<Set<(data: any) => void>>(new Set());
-  const connectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 接続リトライ関連
+  const targetHostIdRef = useRef<string>('');
+  const attemptCountRef = useRef<number>(0);
+  const maxRetries = 3;
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const singleAttemptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingQueueRef = useRef<(ClientMessage | HostMessage)[]>([]);
 
   const myInfoRef = useRef<{ name: string; bombMode: BombMode; bombInterval: number }>({
@@ -125,15 +132,22 @@ export function useWebRTC() {
     }
   }, []);
 
-  const clearConnectTimeout = useCallback(() => {
-    if (connectTimeoutRef.current) {
-      clearTimeout(connectTimeoutRef.current);
-      connectTimeoutRef.current = null;
+  const clearAllTimers = useCallback(() => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    if (singleAttemptTimeoutRef.current) {
+      clearTimeout(singleAttemptTimeoutRef.current);
+      singleAttemptTimeoutRef.current = null;
     }
   }, []);
 
   const disconnect = useCallback(() => {
-    clearConnectTimeout();
+    clearAllTimers();
+    attemptCountRef.current = 0;
+    targetHostIdRef.current = '';
+
     if (connRef.current) {
       if (connRef.current.open) {
         try {
@@ -147,12 +161,13 @@ export function useWebRTC() {
     }
     setIsConnected(false);
     setIsConnecting(false);
+    setConnectingStatus('');
     setRole(null);
     roleRef.current = null;
     setOpponentName('');
     setConnectionError(null);
     pendingQueueRef.current = [];
-  }, [clearConnectTimeout]);
+  }, [clearAllTimers]);
 
   const setupConnectionListeners = useCallback((conn: DataConnection) => {
     // RTCPeerConnection の ICE 接続状態監視と restartIce リトライ処理
@@ -178,9 +193,10 @@ export function useWebRTC() {
     attachPeerConnectionListeners();
 
     conn.on('open', () => {
-      clearConnectTimeout();
+      clearAllTimers();
       setIsConnected(true);
       setIsConnecting(false);
+      setConnectingStatus('');
       setConnectionError(null);
 
       attachPeerConnectionListeners();
@@ -220,6 +236,7 @@ export function useWebRTC() {
           }
           setIsConnected(false);
           setIsConnecting(false);
+          setConnectingStatus('');
           setRole(null);
           roleRef.current = null;
           setOpponentName('');
@@ -270,9 +287,10 @@ export function useWebRTC() {
     });
 
     conn.on('close', () => {
-      clearConnectTimeout();
+      clearAllTimers();
       setIsConnected(false);
       setIsConnecting(false);
+      setConnectingStatus('');
       setRole(null);
       roleRef.current = null;
       setOpponentName('');
@@ -280,13 +298,61 @@ export function useWebRTC() {
 
     conn.on('error', (err) => {
       console.error('DataConnection error:', err);
-      clearConnectTimeout();
-      setIsConnecting(false);
-      setConnectionError('離れたネットワーク間の通信確立に失敗しました。再接続を試みるか初期画面に戻ってください。');
     });
-  }, [clearConnectTimeout]);
+  }, [clearAllTimers]);
 
-  // PeerJS インスタンス生成（STUN + Open Relay TURN サーバー設定 & iceTransportPolicy）
+  // 単一接続試行関数（リトライ対応）
+  const attemptConnectInternal = useCallback((targetHostId: string) => {
+    if (!peerRef.current) return;
+
+    if (connRef.current) {
+      try { connRef.current.close(); } catch {}
+      connRef.current = null;
+    }
+
+    const conn = peerRef.current.connect(targetHostId.toUpperCase(), {
+      reliable: true,
+    });
+
+    connRef.current = conn;
+    setRole('guest');
+    roleRef.current = 'guest';
+    setupConnectionListeners(conn);
+
+    // 1回の試行が5秒以内に完了しない場合はタイムアウトして次のリトライへ
+    if (singleAttemptTimeoutRef.current) clearTimeout(singleAttemptTimeoutRef.current);
+    singleAttemptTimeoutRef.current = setTimeout(() => {
+      if (attemptCountRef.current < maxRetries) {
+        console.warn(`[WebRTC] Connection attempt ${attemptCountRef.current} timed out. Retrying...`);
+        scheduleNextRetry();
+      } else {
+        setIsConnecting(false);
+        setConnectingStatus('');
+        setConnectionError('部屋が見つかりませんでした。入力したIDに間違いがないか、ホスト側が部屋作成完了画面（IDが表示された状態）になっているか確認してください。');
+      }
+    }, 5000);
+  }, [setupConnectionListeners]);
+
+  // 次のリトライのスケジュール関数
+  const scheduleNextRetry = useCallback(() => {
+    if (attemptCountRef.current >= maxRetries) {
+      setIsConnecting(false);
+      setConnectingStatus('');
+      setConnectionError('部屋が見つかりませんでした。入力したIDに間違いがないか、ホスト側が部屋作成完了画面（IDが表示された状態）になっているか確認してください。');
+      return;
+    }
+
+    attemptCountRef.current += 1;
+    setConnectingStatus(`部屋を探しています... (試行 ${attemptCountRef.current}/${maxRetries})`);
+
+    retryTimerRef.current = setTimeout(() => {
+      if (targetHostIdRef.current) {
+        attemptConnectInternal(targetHostIdRef.current);
+      }
+    }, 2000);
+  }, [attemptConnectInternal]);
+
+  // PeerJS インスタンス生成（STUN + Open Relay TURN サーバー設定 & iceTransportPolicy & pingInterval）
   useEffect(() => {
     let peerInstance: Peer | null = null;
 
@@ -298,7 +364,8 @@ export function useWebRTC() {
           iceTransportPolicy: 'all',
           iceCandidatePoolSize: 10,
         },
-        debug: 1,
+        debug: 2, // debugログを強化
+        pingInterval: 5000, // シグナリングサーバー接続維持
       });
 
       peerInstance.on('open', (id) => {
@@ -315,11 +382,18 @@ export function useWebRTC() {
       peerInstance.on('error', (err: any) => {
         console.error('Peer error:', err);
         if (err.type === 'peer-unavailable') {
-          clearConnectTimeout();
-          setIsConnecting(false);
-          setConnectionError('指定されたホスト（ルームID）が見つかりません。IDを確認してください。');
+          // 即座にエラーにせず、リトライ試行回数が残っていれば再試行
+          if (attemptCountRef.current > 0 && attemptCountRef.current < maxRetries) {
+            console.warn(`[WebRTC] Peer unavailable on attempt ${attemptCountRef.current}. Scheduling retry...`);
+            if (singleAttemptTimeoutRef.current) clearTimeout(singleAttemptTimeoutRef.current);
+            scheduleNextRetry();
+          } else if (attemptCountRef.current >= maxRetries) {
+            setIsConnecting(false);
+            setConnectingStatus('');
+            setConnectionError('部屋が見つかりませんでした。入力したIDに間違いがないか、ホスト側が部屋作成完了画面（IDが表示された状態）になっているか確認してください。');
+          }
         } else if (err.type === 'network' || err.type === 'server-error') {
-          setConnectionError('ネットワーク接続エラーが発生しました。');
+          setConnectionError('ネットワーク接続エラーが発生しました。インターネット接続を確認してください。');
         }
       });
 
@@ -327,38 +401,26 @@ export function useWebRTC() {
     });
 
     return () => {
-      clearConnectTimeout();
+      clearAllTimers();
       peerInstance?.destroy();
     };
-  }, [setupConnectionListeners, clearConnectTimeout]);
+  }, [setupConnectionListeners, clearAllTimers, scheduleNextRetry]);
 
-  // ゲスト側の接続開始（15秒タイムアウト機能付き）
+  // ゲスト側の接続開始（最大3回自動リトライ）
   const connectToHost = useCallback((hostId: string) => {
     if (!peerRef.current) return;
 
+    clearAllTimers();
     setConnectionError(null);
     setIsConnecting(true);
-    clearConnectTimeout();
 
-    // 15秒接続タイムアウト（離れたネットワーク/TURN接続待機用）
-    connectTimeoutRef.current = setTimeout(() => {
-      setIsConnecting(false);
-      setConnectionError('離れたネットワーク間の通信確立に失敗しました。再接続を試みるか初期画面に戻ってください。');
-      if (connRef.current) {
-        try { connRef.current.close(); } catch {}
-        connRef.current = null;
-      }
-    }, 15000);
+    const cleanHostId = hostId.toUpperCase().trim();
+    targetHostIdRef.current = cleanHostId;
+    attemptCountRef.current = 1;
+    setConnectingStatus(`部屋を探しています... (試行 1/${maxRetries})`);
 
-    const conn = peerRef.current.connect(hostId.toUpperCase(), {
-      reliable: true,
-    });
-
-    connRef.current = conn;
-    setRole('guest');
-    roleRef.current = 'guest';
-    setupConnectionListeners(conn);
-  }, [setupConnectionListeners, clearConnectTimeout]);
+    attemptConnectInternal(cleanHostId);
+  }, [attemptConnectInternal, clearAllTimers]);
 
   const sendMessage = useCallback((data: ClientMessage | HostMessage) => {
     if (connRef.current && connRef.current.open) {
@@ -384,6 +446,7 @@ export function useWebRTC() {
     peerId,
     isConnected,
     isConnecting,
+    connectingStatus,
     connectionError,
     setConnectionError,
     role,

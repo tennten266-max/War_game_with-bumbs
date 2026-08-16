@@ -15,6 +15,7 @@ export default function HomePage() {
     peerId,
     isConnected,
     isConnecting,
+    connectingStatus,
     connectionError,
     setConnectionError,
     role,
@@ -272,9 +273,9 @@ export default function HomePage() {
               <div className="p-3 bg-gray-800/80 rounded-xl border border-gray-700">
                 <p className="text-xs text-gray-400 mb-1">相手に伝える ルームID (Peer ID):</p>
                 <p className="text-2xl font-mono font-black text-blue-400 tracking-wider select-all break-all">
-                  {peerId || 'ID生成中...'}
+                  {peerId ? peerId : <span className="text-amber-400 text-lg font-bold animate-pulse">ID登録中...</span>}
                 </p>
-                <p className="text-[10px] text-gray-500 mt-1">タップまたは選択してコピー</p>
+                <p className="text-[10px] text-gray-500 mt-1">IDが表示されてから相手に参加を伝えてください</p>
               </div>
             )}
 
@@ -313,7 +314,7 @@ export default function HomePage() {
             ) : (
               <div className="flex items-center justify-center gap-2 text-gray-400 py-3 text-sm">
                 <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                <span>{isHost ? '相手の接続を待っています...' : 'ホストに接続中... (最大15秒)'}</span>
+                <span>{isHost ? '相手の接続を待っています...' : (connectingStatus || 'ホストに接続中...')}</span>
               </div>
             )}
 

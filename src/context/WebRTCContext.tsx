@@ -9,6 +9,7 @@ interface WebRTCContextType {
   peerId: string;
   isConnected: boolean;
   isConnecting: boolean;
+  connectingStatus: string;
   connectionError: string | null;
   setConnectionError: (err: string | null) => void;
   role: 'host' | 'guest' | null;
