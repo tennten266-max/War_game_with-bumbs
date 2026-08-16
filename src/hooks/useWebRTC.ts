@@ -6,10 +6,19 @@ import type Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import { ClientMessage, HostMessage, BombMode, GameMessage } from '@/types/game';
 
-const ICE_SERVERS = [
+// STUN + Open Relay TURNサーバー構成
+const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+    ],
+    username: 'openrelay',
+    credential: 'openrelay',
+  },
 ];
 
 export function useWebRTC() {
@@ -146,11 +155,35 @@ export function useWebRTC() {
   }, [clearConnectTimeout]);
 
   const setupConnectionListeners = useCallback((conn: DataConnection) => {
+    // RTCPeerConnection の ICE 接続状態監視と restartIce リトライ処理
+    const attachPeerConnectionListeners = () => {
+      const pc = (conn as any).peerConnection as RTCPeerConnection | undefined;
+      if (pc) {
+        pc.oniceconnectionstatechange = () => {
+          console.log('[WebRTC] ICE connection state:', pc.iceConnectionState);
+          if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            console.warn('[WebRTC] ICE connection degraded. Attempting restartIce...');
+            if (typeof pc.restartIce === 'function') {
+              try {
+                pc.restartIce();
+              } catch (err) {
+                console.error('[WebRTC] restartIce error:', err);
+              }
+            }
+          }
+        };
+      }
+    };
+
+    attachPeerConnectionListeners();
+
     conn.on('open', () => {
       clearConnectTimeout();
       setIsConnected(true);
       setIsConnecting(false);
       setConnectionError(null);
+
+      attachPeerConnectionListeners();
 
       // 接続確立時に自分の設定情報を相手に送信
       conn.send({
@@ -249,11 +282,11 @@ export function useWebRTC() {
       console.error('DataConnection error:', err);
       clearConnectTimeout();
       setIsConnecting(false);
-      setConnectionError('接続エラーが発生しました。再度お試しください。');
+      setConnectionError('離れたネットワーク間の通信確立に失敗しました。再接続を試みるか初期画面に戻ってください。');
     });
   }, [clearConnectTimeout]);
 
-  // PeerJS インスタンス生成（Google STUN サーバー設定）
+  // PeerJS インスタンス生成（STUN + Open Relay TURN サーバー設定 & iceTransportPolicy）
   useEffect(() => {
     let peerInstance: Peer | null = null;
 
@@ -262,6 +295,7 @@ export function useWebRTC() {
       peerInstance = new Peer(randomId, {
         config: {
           iceServers: ICE_SERVERS,
+          iceTransportPolicy: 'all',
           iceCandidatePoolSize: 10,
         },
         debug: 1,
@@ -298,7 +332,7 @@ export function useWebRTC() {
     };
   }, [setupConnectionListeners, clearConnectTimeout]);
 
-  // ゲスト側の接続開始（10秒タイムアウト機能付き）
+  // ゲスト側の接続開始（15秒タイムアウト機能付き）
   const connectToHost = useCallback((hostId: string) => {
     if (!peerRef.current) return;
 
@@ -306,15 +340,15 @@ export function useWebRTC() {
     setIsConnecting(true);
     clearConnectTimeout();
 
-    // 10秒接続タイムアウト
+    // 15秒接続タイムアウト（離れたネットワーク/TURN接続待機用）
     connectTimeoutRef.current = setTimeout(() => {
       setIsConnecting(false);
-      setConnectionError('接続に失敗しました。もう一度試すか、同じWi-Fi環境でお試しください。');
+      setConnectionError('離れたネットワーク間の通信確立に失敗しました。再接続を試みるか初期画面に戻ってください。');
       if (connRef.current) {
         try { connRef.current.close(); } catch {}
         connRef.current = null;
       }
-    }, 10000);
+    }, 15000);
 
     const conn = peerRef.current.connect(hostId.toUpperCase(), {
       reliable: true,

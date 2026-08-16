@@ -313,7 +313,7 @@ export default function HomePage() {
             ) : (
               <div className="flex items-center justify-center gap-2 text-gray-400 py-3 text-sm">
                 <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                <span>{isHost ? '相手の接続を待っています...' : 'ホストに接続中... (最大10秒)'}</span>
+                <span>{isHost ? '相手の接続を待っています...' : 'ホストに接続中... (最大15秒)'}</span>
               </div>
             )}
 
