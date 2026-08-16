@@ -22,6 +22,7 @@ interface WebRTCContextType {
   opponentName: string;
   opponentBombMode: BombMode;
   opponentBombInterval: number;
+  startHosting: () => void;
   connectToHost: (hostId: string) => void;
   disconnect: () => void;
   sendMessage: (data: ClientMessage | HostMessage) => void;

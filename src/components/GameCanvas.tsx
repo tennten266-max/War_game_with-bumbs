@@ -28,11 +28,11 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
 
   const currentRole = role || 'host';
 
-  const [p1Pos, setP1Pos] = useState<Vector2D>({ x: 100, y: 200 });
-  const [p2Pos, setP2Pos] = useState<Vector2D>({ x: 300, y: 200 });
-
   const [p1Hp, setP1Hp] = useState<number>(3);
   const [p2Hp, setP2Hp] = useState<number>(3);
+
+  const p1HpRef = useRef<number>(3);
+  const p2HpRef = useRef<number>(3);
 
   // 勝敗状態 ('PLAYING' | 'WIN' | 'LOSE')
   const [gameState, setGameState] = useState<'PLAYING' | 'WIN' | 'LOSE'>('PLAYING');
@@ -41,8 +41,17 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
   const [timeoutReason, setTimeoutReason] = useState<'INACTIVE' | 'DISCONNECTED' | null>(null);
   const [countdown, setCountdown] = useState<number>(3);
 
+  // 自機および相手の座標管理（Client-side Prediction & Lerp補間用）
   const p1PosRef = useRef<Vector2D>({ x: 100, y: 200 });
   const p2PosRef = useRef<Vector2D>({ x: 300, y: 200 });
+
+  // 相手の目標座標（受信時）と補間描画用座標
+  const targetOpponentPosRef = useRef<Vector2D>(currentRole === 'host' ? { x: 300, y: 200 } : { x: 100, y: 200 });
+  const renderedOpponentPosRef = useRef<Vector2D>(currentRole === 'host' ? { x: 300, y: 200 } : { x: 100, y: 200 });
+
+  // 移動データ送信スロットリング用（30Hz / 約33ms周期）
+  const lastMoveSentTimeRef = useRef<number>(0);
+  const lastSentPosRef = useRef<Vector2D>({ x: -999, y: -999 });
 
   const bombsRef = useRef<Bomb[]>([]);
   const explosionsRef = useRef<Explosion[]>([]);
@@ -56,10 +65,14 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
   const resetGame = useCallback(() => {
     const initialP1 = { x: 100, y: 200 };
     const initialP2 = { x: 300, y: 200 };
-    setP1Pos(initialP1);
-    setP2Pos(initialP2);
     p1PosRef.current = initialP1;
     p2PosRef.current = initialP2;
+    targetOpponentPosRef.current = currentRole === 'host' ? initialP2 : initialP1;
+    renderedOpponentPosRef.current = currentRole === 'host' ? initialP2 : initialP1;
+    lastSentPosRef.current = { x: -999, y: -999 };
+
+    p1HpRef.current = 3;
+    p2HpRef.current = 3;
     setP1Hp(3);
     setP2Hp(3);
     bombsRef.current = [];
@@ -67,7 +80,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     lastOpponentActionTimeRef.current = Date.now();
     setTimeoutReason(null);
     setGameState('PLAYING');
-  }, []);
+  }, [currentRole]);
 
   // 通信メッセージの受信処理
   useEffect(() => {
@@ -76,13 +89,10 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       lastOpponentActionTimeRef.current = Date.now();
 
       if (data.type === 'MOVE') {
-        if (data.role === 'host') {
-          setP1Pos(data.pos);
-          p1PosRef.current = data.pos;
-        }
-        if (data.role === 'guest') {
-          setP2Pos(data.pos);
-          p2PosRef.current = data.pos;
+        if (data.role === 'host' && currentRole === 'guest') {
+          targetOpponentPosRef.current = data.pos;
+        } else if (data.role === 'guest' && currentRole === 'host') {
+          targetOpponentPosRef.current = data.pos;
         }
       }
 
@@ -94,9 +104,14 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
         });
       }
 
-      if (data.type === 'DAMAGE') {
-        if (data.targetRole === 'host') setP1Hp((prev) => Math.max(0, prev - 1));
-        if (data.targetRole === 'guest') setP2Hp((prev) => Math.max(0, prev - 1));
+      // ホストから送信された確定HPをそのまま反映（ゲスト側は計算しない）
+      if (data.type === 'DAMAGE' || data.type === 'HP_SYNC') {
+        if (typeof data.p1Hp === 'number' && typeof data.p2Hp === 'number') {
+          p1HpRef.current = data.p1Hp;
+          p2HpRef.current = data.p2Hp;
+          setP1Hp(data.p1Hp);
+          setP2Hp(data.p2Hp);
+        }
       }
 
       if (data.type === 'RETRY') {
@@ -116,7 +131,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     });
 
     return unsubscribe;
-  }, [onMessage, resetGame, router, disconnect]);
+  }, [onMessage, resetGame, router, disconnect, currentRole]);
 
   // 相手の切断・放置検知タイマー（10秒無通信・操作なしで判定）
   useEffect(() => {
@@ -124,7 +139,6 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       return;
     }
 
-    // 判定インターバル（500msごと）
     const checkInterval = setInterval(() => {
       const elapsed = Date.now() - lastOpponentActionTimeRef.current;
       if (!isConnected) {
@@ -171,35 +185,42 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     }
   }, [p1Hp, p2Hp, currentRole]);
 
-  // 移動処理
+  // 移動処理（Client-side Prediction ＆ 30Hz送信スロットリング）
   const handleMoveInput = useCallback((vector: Vector2D) => {
     if (gameState !== 'PLAYING' || timeoutReason !== null) return;
     const speed = 4;
 
+    // 自機位置を即座に更新（ローカル描画はラグゼロ完全同期）
+    let currentMyPos: Vector2D;
     if (currentRole === 'host') {
-      setP1Pos((prev) => {
-        const next = {
-          x: Math.max(20, Math.min(380, prev.x + vector.x * speed)),
-          y: Math.max(20, Math.min(380, prev.y + vector.y * speed)),
-        };
-        p1PosRef.current = next;
-        sendMessage({ type: 'MOVE', role: 'host', pos: next });
-        return next;
-      });
+      const prev = p1PosRef.current;
+      currentMyPos = {
+        x: Math.max(20, Math.min(380, prev.x + vector.x * speed)),
+        y: Math.max(20, Math.min(380, prev.y + vector.y * speed)),
+      };
+      p1PosRef.current = currentMyPos;
     } else {
-      setP2Pos((prev) => {
-        const next = {
-          x: Math.max(20, Math.min(380, prev.x + vector.x * speed)),
-          y: Math.max(20, Math.min(380, prev.y + vector.y * speed)),
-        };
-        p2PosRef.current = next;
-        sendMessage({ type: 'MOVE', role: 'guest', pos: next });
-        return next;
-      });
+      const prev = p2PosRef.current;
+      currentMyPos = {
+        x: Math.max(20, Math.min(380, prev.x + vector.x * speed)),
+        y: Math.max(20, Math.min(380, prev.y + vector.y * speed)),
+      };
+      p2PosRef.current = currentMyPos;
+    }
+
+    // 送信レートの最適化（Tick Rate = 約30Hz: 33msスロットル）
+    const now = Date.now();
+    const lastSent = lastSentPosRef.current;
+    const distMoved = Math.hypot(currentMyPos.x - lastSent.x, currentMyPos.y - lastSent.y);
+
+    if (now - lastMoveSentTimeRef.current >= 33 && distMoved > 0.5) {
+      lastMoveSentTimeRef.current = now;
+      lastSentPosRef.current = currentMyPos;
+      sendMessage({ type: 'MOVE', role: currentRole, pos: currentMyPos });
     }
   }, [currentRole, sendMessage, gameState, timeoutReason]);
 
-  // 爆弾設置（最新座標はrefから参照することで移動による再生成・タイマーリセットを防止）
+  // 爆弾設置（最新座標はrefから参照）
   const placeBomb = useCallback(() => {
     if (gameState !== 'PLAYING' || timeoutReason !== null) return;
     const myPos = currentRole === 'host' ? p1PosRef.current : p2PosRef.current;
@@ -218,7 +239,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     sendMessage({ type: 'PLACE_BOMB', bomb: newBomb });
   }, [currentRole, sendMessage, gameState, timeoutReason]);
 
-  // 自動設置モード（bombMode === 'auto'）: 設定された秒数間隔（0.5s〜3.0s）ごとに自動で自機位置に爆弾を設置
+  // 自動設置モード（bombMode === 'auto'）
   useEffect(() => {
     if (bombMode !== 'auto' || gameState !== 'PLAYING' || timeoutReason !== null) {
       return;
@@ -240,7 +261,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     sendMessage({ type: 'RETRY' });
   };
 
-  // ② 設定を変えて再戦（ルーム接続は維持したままロビーに戻る）
+  // ② 設定を変えて再戦（ロビーに戻る）
   const handleReturnToLobby = () => {
     sendMessage({ type: 'RETURN_TO_LOBBY' });
     router.push('/');
@@ -262,7 +283,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     placeBomb,
   }));
 
-  // 描画 ＆ 爆発判定ループ
+  // 描画 ＆ 爆発判定ループ（Lerp補間による60fpsぬるぬる描画）
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -285,6 +306,16 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
       }
 
+      // 相手座標のスムーズ補間移動（Lerp: Factor = 0.28）
+      const targetOpponent = targetOpponentPosRef.current;
+      const renderedOpponent = renderedOpponentPosRef.current;
+      renderedOpponent.x += (targetOpponent.x - renderedOpponent.x) * 0.28;
+      renderedOpponent.y += (targetOpponent.y - renderedOpponent.y) * 0.28;
+
+      // 実際の描画位置を解決（自機はラグ0msの直接位置、相手は滑らかなLerp位置）
+      const drawP1 = currentRole === 'host' ? p1PosRef.current : renderedOpponent;
+      const drawP2 = currentRole === 'guest' ? p2PosRef.current : renderedOpponent;
+
       // 爆弾処理
       bombsRef.current = bombsRef.current.filter((bomb) => {
         const elapsed = now - bomb.createdAt;
@@ -300,16 +331,33 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
           });
 
           if (currentRole === 'host' && gameState === 'PLAYING' && timeoutReason === null) {
-            const checkDamage = (pos: Vector2D, targetRole: 'host' | 'guest') => {
-              const dist = Math.hypot(pos.x - bomb.x, pos.y - bomb.y);
-              if (dist <= bomb.radius + 14) {
-                if (targetRole === 'host') setP1Hp((p) => Math.max(0, p - 1));
-                if (targetRole === 'guest') setP2Hp((p) => Math.max(0, p - 1));
-                sendMessage({ type: 'DAMAGE', targetRole });
-              }
-            };
-            checkDamage(p1Pos, 'host');
-            checkDamage(p2Pos, 'guest');
+            let hpChanged = false;
+            let damagedRole: 'host' | 'guest' = 'host';
+
+            const dist1 = Math.hypot(drawP1.x - bomb.x, drawP1.y - bomb.y);
+            if (dist1 <= bomb.radius + 14 && p1HpRef.current > 0) {
+              p1HpRef.current = Math.max(0, p1HpRef.current - 1);
+              setP1Hp(p1HpRef.current);
+              hpChanged = true;
+              damagedRole = 'host';
+            }
+
+            const dist2 = Math.hypot(drawP2.x - bomb.x, drawP2.y - bomb.y);
+            if (dist2 <= bomb.radius + 14 && p2HpRef.current > 0) {
+              p2HpRef.current = Math.max(0, p2HpRef.current - 1);
+              setP2Hp(p2HpRef.current);
+              hpChanged = true;
+              damagedRole = 'guest';
+            }
+
+            if (hpChanged) {
+              sendMessage({
+                type: 'DAMAGE',
+                targetRole: damagedRole,
+                p1Hp: p1HpRef.current,
+                p2Hp: p2HpRef.current,
+              });
+            }
           }
 
           return false;
@@ -352,7 +400,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       // プレイヤー 1P (Blue)
       ctx.fillStyle = '#3B82F6';
       ctx.beginPath();
-      ctx.arc(p1Pos.x, p1Pos.y, 14, 0, Math.PI * 2);
+      ctx.arc(drawP1.x, drawP1.y, 14, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = '#93C5FD';
       ctx.lineWidth = 3;
@@ -362,12 +410,12 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       ctx.fillStyle = '#93C5FD';
       ctx.font = 'bold 10px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(p1DisplayName.length > 8 ? p1DisplayName.slice(0, 8) + '…' : p1DisplayName, p1Pos.x, p1Pos.y - 20);
+      ctx.fillText(p1DisplayName.length > 8 ? p1DisplayName.slice(0, 8) + '…' : p1DisplayName, drawP1.x, drawP1.y - 20);
 
       // プレイヤー 2P (Red)
       ctx.fillStyle = '#EF4444';
       ctx.beginPath();
-      ctx.arc(p2Pos.x, p2Pos.y, 14, 0, Math.PI * 2);
+      ctx.arc(drawP2.x, drawP2.y, 14, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = '#FCA5A5';
       ctx.lineWidth = 3;
@@ -377,14 +425,14 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       ctx.fillStyle = '#FCA5A5';
       ctx.font = 'bold 10px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(p2DisplayName.length > 8 ? p2DisplayName.slice(0, 8) + '…' : p2DisplayName, p2Pos.x, p2Pos.y - 20);
+      ctx.fillText(p2DisplayName.length > 8 ? p2DisplayName.slice(0, 8) + '…' : p2DisplayName, drawP2.x, drawP2.y - 20);
 
       animId = requestAnimationFrame(render);
     };
 
     render();
     return () => cancelAnimationFrame(animId);
-  }, [p1Pos, p2Pos, currentRole, sendMessage, gameState, p1DisplayName, p2DisplayName, timeoutReason]);
+  }, [currentRole, sendMessage, gameState, p1DisplayName, p2DisplayName, timeoutReason]);
 
   return (
     <div className="flex flex-col items-center gap-3 relative">

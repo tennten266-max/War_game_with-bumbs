@@ -26,6 +26,9 @@ export default function HomePage() {
     bombInterval,
     setBombInterval,
     opponentName,
+    opponentBombMode,
+    opponentBombInterval,
+    startHosting,
     connectToHost,
     disconnect,
     sendMessage,
@@ -39,6 +42,7 @@ export default function HomePage() {
   const handleCreateRoom = () => {
     setConnectionError(null);
     setIsHostCreated(true);
+    startHosting();
   };
 
   // ルーム参加 (Guest)
@@ -80,9 +84,9 @@ export default function HomePage() {
     return unsubscribe;
   }, [onMessage, router, setBombMode, setBombInterval]);
 
-  const isWaitingOrConnected = (isHostCreated || isConnected || isConnecting || !!role) && !connectionError;
-  const isHost = !role || role === 'host';
   const isGuest = role === 'guest';
+  const isHost = role === 'host' || (!role && isHostCreated);
+  const isWaitingOrConnected = (isHostCreated || isConnected || isConnecting || isGuest || role === 'host') && !connectionError;
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white p-4 select-none relative">

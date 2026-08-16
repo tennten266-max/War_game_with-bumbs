@@ -32,7 +32,8 @@ export type GameMessage =
   | { type: 'HOST_CONFIG'; bombMode: BombMode; bombInterval: number }
   | { type: 'MOVE'; role: 'host' | 'guest'; pos: Vector2D }
   | { type: 'PLACE_BOMB'; bomb: Bomb }
-  | { type: 'DAMAGE'; targetRole: 'host' | 'guest' }
+  | { type: 'DAMAGE'; targetRole: 'host' | 'guest'; p1Hp: number; p2Hp: number }
+  | { type: 'HP_SYNC'; p1Hp: number; p2Hp: number }
   | { type: 'RETRY' }
   | { type: 'RETURN_TO_LOBBY' }
   | { type: 'DISCONNECT' }
