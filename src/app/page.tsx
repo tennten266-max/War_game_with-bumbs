@@ -249,7 +249,7 @@ export default function HomePage() {
             <div className="space-y-2">
               <input
                 type="text"
-                placeholder="ホストのPeer IDを入力"
+                placeholder="相手のルームIDを入力"
                 value={inputHostId}
                 onChange={(e) => setInputHostId(e.target.value.toUpperCase())}
                 className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-center text-base font-mono uppercase focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
@@ -275,7 +275,7 @@ export default function HomePage() {
 
             {isHost && (
               <div className="p-3 bg-gray-800/80 rounded-xl border border-gray-700">
-                <p className="text-xs text-gray-400 mb-1">相手に伝える ルームID (Peer ID):</p>
+                <p className="text-xs text-gray-400 mb-1">相手に伝える ルームID:</p>
                 <p className="text-2xl font-mono font-black text-blue-400 tracking-wider select-all break-all">
                   {peerId ? peerId : <span className="text-amber-400 text-lg font-bold animate-pulse">ID登録中...</span>}
                 </p>

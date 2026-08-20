@@ -10,7 +10,8 @@ import InfoModal from '@/components/InfoModal';
 
 export default function GamePage() {
   const router = useRouter();
-  const { role, isConnected, playerName, bombMode, bombInterval } = useWebRTCContext();
+  // 1. onMessage をコンテキストから取得
+  const { role, isConnected, playerName, bombMode, bombInterval, onMessage } = useWebRTCContext();
   const canvasRef = useRef<GameCanvasHandle>(null);
 
   // 未接続で直接 /game に来た場合はトップページへリダイレクト
@@ -19,6 +20,25 @@ export default function GamePage() {
       router.push('/');
     }
   }, [isConnected, role, router]);
+
+  // 2. 相手からのネットワークメッセージ受信ハンドラー（ここを追加）
+  useEffect(() => {
+    if (!onMessage) return;
+
+    const unsubscribe = onMessage((data) => {
+      // GameCanvas 側の受信用メソッド（またはデータ処理）を呼び出す
+      if (canvasRef.current) {
+        // GameCanvasに handleNetworkMessage など受信処理メソッドがあれば呼び出す
+        if ('handleNetworkMessage' in canvasRef.current && typeof (canvasRef.current as any).handleNetworkMessage === 'function') {
+          (canvasRef.current as any).handleNetworkMessage(data);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [onMessage]);
 
   // バーチャルパッド操作ハンドラ
   const handlePadMove = useCallback((vector: { x: number; y: number; active: boolean }) => {
@@ -70,9 +90,8 @@ export default function GamePage() {
         <GameCanvas ref={canvasRef} />
       </div>
 
-      {/* 操作エリア（Safariのボトムバーから持ち上げた配置） */}
+      {/* 操作エリア */}
       <div className="w-full max-w-md flex flex-col gap-2 shrink-0 mb-1">
-        {/* 手動設置モード時のみボタンを表示（自動設置モード時は非レンダリング） */}
         {bombMode === 'manual' ? (
           <button
             onClick={handlePlaceBomb}
