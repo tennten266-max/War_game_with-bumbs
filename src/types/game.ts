@@ -25,6 +25,7 @@ export interface Explosion {
 }
 
 export type BombMode = 'manual' | 'auto';
+export type GameMode = 'online' | 'cpu';
 
 export type GameMessage =
   | { type: 'START_GAME'; bombMode?: BombMode; bombInterval?: number }

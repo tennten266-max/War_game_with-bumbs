@@ -3,9 +3,13 @@
 
 import React, { createContext, useContext } from 'react';
 import { useWebRTC } from '@/hooks/useWebRTC';
-import { Vector2D, ClientMessage, HostMessage, BombMode } from '@/types/game';
+import { Vector2D, ClientMessage, HostMessage, BombMode, GameMode } from '@/types/game';
 
 interface WebRTCContextType {
+  gameMode: GameMode;
+  isCpuMode: boolean;
+  setGameMode: (mode: GameMode) => void;
+  startCpuGame: () => void;
   peerId: string;
   isConnected: boolean;
   isConnecting: boolean;

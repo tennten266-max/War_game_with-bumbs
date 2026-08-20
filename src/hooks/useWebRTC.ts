@@ -3,12 +3,13 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Pusher, { Channel } from 'pusher-js';
-import { ClientMessage, HostMessage, BombMode, GameMessage } from '@/types/game';
+import { ClientMessage, HostMessage, BombMode, GameMessage, GameMode } from '@/types/game';
 
 const PUSHER_KEY = 'abfb8a02ac2faf89a956';
 const PUSHER_CLUSTER = 'ap3';
 
 export function useWebRTC() {
+  const [gameMode, setGameModeState] = useState<GameMode>('online');
   const [peerId, setPeerId] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
@@ -24,6 +25,8 @@ export function useWebRTC() {
   const [opponentName, setOpponentName] = useState<string>('');
   const [opponentBombMode, setOpponentBombMode] = useState<BombMode>('manual');
   const [opponentBombInterval, setOpponentBombInterval] = useState<number>(2.0);
+
+  const gameModeRef = useRef<GameMode>('online');
 
   const pusherRef = useRef<Pusher | null>(null);
   const channelRef = useRef<Channel | null>(null);
@@ -345,6 +348,12 @@ pollingIntervalRef.current = setInterval(poll, 1000);
   const sendMessage = useCallback((data: ClientMessage | HostMessage) => {
     const currentRole = roleRef.current || 'host';
     const roomId = currentRoomIdRef.current;
+
+    // CPUモードの場合はPusher/リレーへのネットワーク送信をスキップ
+    if (gameModeRef.current === 'cpu') {
+      return;
+    }
+
     if (!roomId) return;
 
     const msgId = `${currentRole}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -369,6 +378,25 @@ pollingIntervalRef.current = setInterval(poll, 1000);
     }).catch(() => {});
   }, []);
 
+  const setGameMode = useCallback((mode: GameMode) => {
+    setGameModeState(mode);
+    gameModeRef.current = mode;
+  }, []);
+
+  const startCpuGame = useCallback(() => {
+    setGameModeState('cpu');
+    gameModeRef.current = 'cpu';
+    setRole('host');
+    roleRef.current = 'host';
+    setOpponentName('🤖 CPU (Bot)');
+    setOpponentBombMode(myInfoRef.current.bombMode);
+    setOpponentBombInterval(myInfoRef.current.bombInterval);
+    setIsConnected(true);
+    setIsConnecting(false);
+    setConnectingStatus('');
+    setConnectionError(null);
+  }, []);
+
   const setPlayerName = useCallback((name: string) => {
     setPlayerNameState(name);
     myInfoRef.current.name = name;
@@ -386,6 +414,7 @@ pollingIntervalRef.current = setInterval(poll, 1000);
   const setBombMode = useCallback((mode: BombMode) => {
     setBombModeState(mode);
     myInfoRef.current.bombMode = mode;
+    setOpponentBombMode(mode);
     try {
       localStorage.setItem('tank_game_bomb_mode', mode);
     } catch {}
@@ -399,6 +428,7 @@ pollingIntervalRef.current = setInterval(poll, 1000);
   const setBombInterval = useCallback((interval: number) => {
     setBombIntervalState(interval);
     myInfoRef.current.bombInterval = interval;
+    setOpponentBombInterval(interval);
     try {
       localStorage.setItem('tank_game_bomb_interval', interval.toString());
     } catch {}
@@ -414,7 +444,7 @@ pollingIntervalRef.current = setInterval(poll, 1000);
     const roomId = currentRoomIdRef.current;
     const currentRole = roleRef.current;
 
-    if (roomId && currentRole) {
+    if (roomId && currentRole && gameModeRef.current === 'online') {
       fetch('/api/relay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -449,6 +479,10 @@ pollingIntervalRef.current = setInterval(poll, 1000);
   }, []);
 
   return {
+    gameMode,
+    isCpuMode: gameMode === 'cpu',
+    setGameMode,
+    startCpuGame,
     peerId,
     isConnected,
     isConnecting,

@@ -12,6 +12,10 @@ const INTERVAL_OPTIONS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
 export default function HomePage() {
   const router = useRouter();
   const {
+    gameMode,
+    isCpuMode,
+    setGameMode,
+    startCpuGame,
     peerId,
     isConnected,
     isConnecting,
@@ -37,9 +41,17 @@ export default function HomePage() {
 
   const [inputHostId, setInputHostId] = useState('');
   const [isHostCreated, setIsHostCreated] = useState(false);
+  const [activeTab, setActiveTab] = useState<'online' | 'cpu'>('online');
+
+  // CPU対戦開始 (1人プレイ)
+  const handleStartCpuGame = () => {
+    startCpuGame();
+    router.push('/game');
+  };
 
   // ルーム作成 (Host)
   const handleCreateRoom = () => {
+    setGameMode('online');
     setConnectionError(null);
     setIsHostCreated(true);
     startHosting();
@@ -48,6 +60,7 @@ export default function HomePage() {
   // ルーム参加 (Guest)
   const handleJoinRoom = () => {
     if (!inputHostId.trim()) return;
+    setGameMode('online');
     setConnectionError(null);
     connectToHost(inputHostId.trim());
   };
@@ -86,7 +99,7 @@ export default function HomePage() {
 
   const isGuest = role === 'guest';
   const isHost = role === 'host' || (!role && isHostCreated);
-  const isWaitingOrConnected = (isHostCreated || isConnected || isConnecting || isGuest || role === 'host') && !connectionError;
+  const isWaitingOrConnected = (isHostCreated || isConnected || isConnecting || isGuest || role === 'host') && !connectionError && !isCpuMode;
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen bg-gray-950 text-white p-4 select-none relative">
@@ -99,7 +112,43 @@ export default function HomePage() {
           <p className="text-xs text-gray-400 font-medium">リアルタイム 2D 戦車爆弾バトル</p>
         </div>
 
-        {/* 接続エラー表示ボックス（10秒タイムアウト時・切断時等） */}
+        {/* モード選択タブ（2人対戦 / 1人プレイ） */}
+        {!isWaitingOrConnected && (
+          <div className="grid grid-cols-2 p-1 bg-gray-900 rounded-2xl border border-gray-800 shadow-lg">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('online');
+                setGameMode('online');
+              }}
+              className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition ${
+                activeTab === 'online'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <span>🌐</span>
+              <span>2人対戦 (オンライン)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('cpu');
+                setGameMode('cpu');
+              }}
+              className={`py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition ${
+                activeTab === 'cpu'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <span>🤖</span>
+              <span>1人プレイ (vs CPU)</span>
+            </button>
+          </div>
+        )}
+
+        {/* 接続エラー表示ボックス */}
         {connectionError && (
           <div className="p-4 bg-red-950/90 border border-red-500/70 rounded-2xl text-red-200 text-xs space-y-3 shadow-xl animate-fade-in text-left backdrop-blur-md">
             <div className="flex items-start gap-2.5">
@@ -229,9 +278,25 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* ルーム作成・参加セクション */}
-        {!isWaitingOrConnected ? (
-          <div className="space-y-4 bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl backdrop-blur-sm">
+        {/* 1人プレイ (vs CPU) の場合 */}
+        {!isWaitingOrConnected && activeTab === 'cpu' && (
+          <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-3 backdrop-blur-sm animate-fade-in">
+            <button
+              onClick={handleStartCpuGame}
+              className="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 font-black text-lg rounded-xl shadow-xl transition active:scale-[0.98] flex items-center justify-center gap-2 text-white"
+            >
+              <span>🤖</span>
+              <span>CPU対戦を開始する</span>
+            </button>
+            <p className="text-[11px] text-gray-400">
+              知能型AI（回避・追尾・爆弾設置）を搭載したBotとすぐに1人で対戦できます
+            </p>
+          </div>
+        )}
+
+        {/* 2人対戦 (オンライン) の場合 */}
+        {!isWaitingOrConnected && activeTab === 'online' && (
+          <div className="space-y-4 bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl backdrop-blur-sm animate-fade-in">
             <button
               onClick={handleCreateRoom}
               className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 font-bold rounded-xl shadow-lg transition active:scale-[0.98] flex items-center justify-center gap-2"
@@ -264,8 +329,11 @@ export default function HomePage() {
               </button>
             </div>
           </div>
-        ) : (
-          <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-4 text-center backdrop-blur-sm">
+        )}
+
+        {/* 待機中または接続完了時のパネル (オンライン対戦時) */}
+        {isWaitingOrConnected && (
+          <div className="bg-gray-900/90 p-5 rounded-2xl border border-gray-800 shadow-xl space-y-4 text-center backdrop-blur-sm animate-fade-in">
             <div className="flex justify-between items-center bg-gray-800/80 px-3 py-2 rounded-xl text-xs">
               <span className="text-gray-400">あなたの役職:</span>
               <span className="text-yellow-400 font-bold">

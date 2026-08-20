@@ -1,10 +1,8 @@
-// src/components/GameCanvas.tsx
-'use client';
-
 import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { useRouter } from 'next/navigation';
 import { Vector2D, Bomb, Explosion, GameMessage } from '@/types/game';
 import { useWebRTCContext } from '@/context/WebRTCContext';
+import { computeCpuAction } from '@/utils/cpuAI';
 
 export interface GameCanvasHandle {
   handleMoveInput: (vector: Vector2D) => void;
@@ -14,6 +12,7 @@ export interface GameCanvasHandle {
 const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
   const router = useRouter();
   const {
+    isCpuMode,
     role,
     bombMode,
     bombInterval,
@@ -53,6 +52,8 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
   const lastMoveSentTimeRef = useRef<number>(0);
   const lastSentPosRef = useRef<Vector2D>({ x: -999, y: -999 });
 
+  const lastCpuBombTimeRef = useRef<number>(0);
+
   const bombsRef = useRef<Bomb[]>([]);
   const explosionsRef = useRef<Explosion[]>([]);
   const lastOpponentActionTimeRef = useRef<number>(Date.now());
@@ -70,6 +71,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     targetOpponentPosRef.current = currentRole === 'host' ? initialP2 : initialP1;
     renderedOpponentPosRef.current = currentRole === 'host' ? initialP2 : initialP1;
     lastSentPosRef.current = { x: -999, y: -999 };
+    lastCpuBombTimeRef.current = 0;
 
     p1HpRef.current = 3;
     p2HpRef.current = 3;
@@ -82,10 +84,11 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     setGameState('PLAYING');
   }, [currentRole]);
 
-  // 通信メッセージの受信処理
+  // 通信メッセージの受信処理（オンライン対戦時）
   useEffect(() => {
+    if (isCpuMode) return;
+
     const unsubscribe = onMessage((data: GameMessage) => {
-      // 相手からの通信を受信したら最終アクティビティ時刻を更新
       lastOpponentActionTimeRef.current = Date.now();
 
       if (data.type === 'MOVE') {
@@ -97,14 +100,12 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       }
 
       if (data.type === 'PLACE_BOMB') {
-        // 端末間の時計のズレによる即時爆発を防ぐため、受信側ローカル時刻で起算
         bombsRef.current.push({
           ...data.bomb,
           createdAt: Date.now(),
         });
       }
 
-      // ホストから送信された確定HPをそのまま反映（ゲスト側は計算しない）
       if (data.type === 'DAMAGE' || data.type === 'HP_SYNC') {
         if (typeof data.p1Hp === 'number' && typeof data.p2Hp === 'number') {
           p1HpRef.current = data.p1Hp;
@@ -118,12 +119,10 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
         resetGame();
       }
 
-      // 相手がロビーへ戻った場合、自分も接続を維持したまま初期画面へ遷移
       if (data.type === 'RETURN_TO_LOBBY') {
         router.push('/');
       }
 
-      // 相手が切断した場合
       if (data.type === 'DISCONNECT') {
         disconnect();
         router.push('/');
@@ -131,11 +130,11 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     });
 
     return unsubscribe;
-  }, [onMessage, resetGame, router, disconnect, currentRole]);
+  }, [onMessage, resetGame, router, disconnect, currentRole, isCpuMode]);
 
-  // 相手の切断・放置検知タイマー（10秒無通信・操作なしで判定）
+  // 相手の切断・放置検知タイマー（オンライン対戦時のみ判定）
   useEffect(() => {
-    if (gameState !== 'PLAYING' || timeoutReason !== null) {
+    if (isCpuMode || gameState !== 'PLAYING' || timeoutReason !== null) {
       return;
     }
 
@@ -151,7 +150,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     return () => {
       clearInterval(checkInterval);
     };
-  }, [gameState, isConnected, timeoutReason]);
+  }, [gameState, isConnected, timeoutReason, isCpuMode]);
 
   // タイムアウト発生時の自動リダイレクトカウントダウン（3秒後に初期画面へ遷移）
   useEffect(() => {
@@ -190,7 +189,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     if (gameState !== 'PLAYING' || timeoutReason !== null) return;
     const speed = 4;
 
-    // 自機位置を即座に更新（ローカル描画はラグゼロ完全同期）
+    // 自機位置を即座に更新
     let currentMyPos: Vector2D;
     if (currentRole === 'host') {
       const prev = p1PosRef.current;
@@ -208,19 +207,20 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       p2PosRef.current = currentMyPos;
     }
 
-    // 送信レートの最適化（Tick Rate = 約30Hz: 33msスロットル）
-    const now = Date.now();
-    const lastSent = lastSentPosRef.current;
-    const distMoved = Math.hypot(currentMyPos.x - lastSent.x, currentMyPos.y - lastSent.y);
+    if (!isCpuMode) {
+      const now = Date.now();
+      const lastSent = lastSentPosRef.current;
+      const distMoved = Math.hypot(currentMyPos.x - lastSent.x, currentMyPos.y - lastSent.y);
 
-    if (now - lastMoveSentTimeRef.current >= 33 && distMoved > 0.5) {
-      lastMoveSentTimeRef.current = now;
-      lastSentPosRef.current = currentMyPos;
-      sendMessage({ type: 'MOVE', role: currentRole, pos: currentMyPos });
+      if (now - lastMoveSentTimeRef.current >= 33 && distMoved > 0.5) {
+        lastMoveSentTimeRef.current = now;
+        lastSentPosRef.current = currentMyPos;
+        sendMessage({ type: 'MOVE', role: currentRole, pos: currentMyPos });
+      }
     }
-  }, [currentRole, sendMessage, gameState, timeoutReason]);
+  }, [currentRole, sendMessage, gameState, timeoutReason, isCpuMode]);
 
-  // 爆弾設置（最新座標はrefから参照）
+  // 爆弾設置
   const placeBomb = useCallback(() => {
     if (gameState !== 'PLAYING' || timeoutReason !== null) return;
     const myPos = currentRole === 'host' ? p1PosRef.current : p2PosRef.current;
@@ -236,10 +236,12 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     };
 
     bombsRef.current.push(newBomb);
-    sendMessage({ type: 'PLACE_BOMB', bomb: newBomb });
-  }, [currentRole, sendMessage, gameState, timeoutReason]);
+    if (!isCpuMode) {
+      sendMessage({ type: 'PLACE_BOMB', bomb: newBomb });
+    }
+  }, [currentRole, sendMessage, gameState, timeoutReason, isCpuMode]);
 
-  // 自動設置モード（bombMode === 'auto'）
+  // 自動設置モード（bombMode === 'auto'）: 1人対戦時は1PとCPUの両方が自動設置
   useEffect(() => {
     if (bombMode !== 'auto' || gameState !== 'PLAYING' || timeoutReason !== null) {
       return;
@@ -248,26 +250,44 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     const intervalMs = Math.max(500, Math.round((bombInterval || 2.0) * 1000));
     const intervalId = setInterval(() => {
       placeBomb();
+
+      // CPUモードならCPUも同時に自動設置
+      if (isCpuMode) {
+        const cpuBomb: Bomb = {
+          id: `cpu-auto-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          x: p2PosRef.current.x,
+          y: p2PosRef.current.y,
+          owner: 'guest',
+          createdAt: Date.now(),
+          armTime: 2500,
+          radius: 50,
+        };
+        bombsRef.current.push(cpuBomb);
+      }
     }, intervalMs);
 
     return () => {
       clearInterval(intervalId);
     };
-  }, [bombMode, bombInterval, gameState, placeBomb, timeoutReason]);
+  }, [bombMode, bombInterval, gameState, placeBomb, timeoutReason, isCpuMode]);
 
   // ① 同じルールで即時再戦
   const handleRetry = () => {
     resetGame();
-    sendMessage({ type: 'RETRY' });
+    if (!isCpuMode) {
+      sendMessage({ type: 'RETRY' });
+    }
   };
 
   // ② 設定を変えて再戦（ロビーに戻る）
   const handleReturnToLobby = () => {
-    sendMessage({ type: 'RETURN_TO_LOBBY' });
+    if (!isCpuMode) {
+      sendMessage({ type: 'RETURN_TO_LOBBY' });
+    }
     router.push('/');
   };
 
-  // ③ 部屋を解散してホームへ（WebRTC切断）
+  // ③ 部屋を解散してホームへ
   const handleLeaveGame = () => {
     disconnect();
     router.push('/');
@@ -283,7 +303,7 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
     placeBomb,
   }));
 
-  // 描画 ＆ 爆発判定ループ（Lerp補間による60fpsぬるぬる描画）
+  // 描画 ＆ 爆発判定 ＆ CPU自律行動ループ
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -296,6 +316,40 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
       const now = Date.now();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      // CPU対戦時の自律思考＆行動（毎フレーム実行）
+      if (isCpuMode && gameState === 'PLAYING' && timeoutReason === null) {
+        const cpuAction = computeCpuAction({
+          cpuPos: p2PosRef.current,
+          playerPos: p1PosRef.current,
+          bombs: bombsRef.current,
+          bombMode,
+          lastCpuBombTime: lastCpuBombTimeRef.current,
+          now,
+        });
+
+        // CPUの移動適用 (3.2px/frame)
+        const cpuSpeed = 3.2;
+        const nextCpuX = Math.max(20, Math.min(380, p2PosRef.current.x + cpuAction.moveVector.x * cpuSpeed));
+        const nextCpuY = Math.max(20, Math.min(380, p2PosRef.current.y + cpuAction.moveVector.y * cpuSpeed));
+        p2PosRef.current = { x: nextCpuX, y: nextCpuY };
+        renderedOpponentPosRef.current = { x: nextCpuX, y: nextCpuY };
+
+        // CPUの手動爆弾設置判断
+        if (cpuAction.shouldPlaceBomb && bombMode === 'manual') {
+          lastCpuBombTimeRef.current = now;
+          const cpuBomb: Bomb = {
+            id: `cpu-${now}-${Math.random().toString(36).substr(2, 4)}`,
+            x: nextCpuX,
+            y: nextCpuY,
+            owner: 'guest',
+            createdAt: now,
+            armTime: 2500,
+            radius: 50,
+          };
+          bombsRef.current.push(cpuBomb);
+        }
+      }
+
       // 背景グリッド
       ctx.strokeStyle = '#1F2937';
       ctx.lineWidth = 1;
@@ -306,15 +360,17 @@ const GameCanvas = forwardRef<GameCanvasHandle>((_, ref) => {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
       }
 
-      // 相手座標のスムーズ補間移動（Lerp: Factor = 0.28）
-      const targetOpponent = targetOpponentPosRef.current;
-      const renderedOpponent = renderedOpponentPosRef.current;
-      renderedOpponent.x += (targetOpponent.x - renderedOpponent.x) * 0.28;
-      renderedOpponent.y += (targetOpponent.y - renderedOpponent.y) * 0.28;
+      // 相手座標のスムーズ補間移動（オンライン時: Lerp / CPU時: 直接位置）
+      if (!isCpuMode) {
+        const targetOpponent = targetOpponentPosRef.current;
+        const renderedOpponent = renderedOpponentPosRef.current;
+        renderedOpponent.x += (targetOpponent.x - renderedOpponent.x) * 0.28;
+        renderedOpponent.y += (targetOpponent.y - renderedOpponent.y) * 0.28;
+      }
 
-      // 実際の描画位置を解決（自機はラグ0msの直接位置、相手は滑らかなLerp位置）
-      const drawP1 = currentRole === 'host' ? p1PosRef.current : renderedOpponent;
-      const drawP2 = currentRole === 'guest' ? p2PosRef.current : renderedOpponent;
+      // 実際の描画位置
+      const drawP1 = currentRole === 'host' ? p1PosRef.current : renderedOpponentPosRef.current;
+      const drawP2 = currentRole === 'guest' ? p2PosRef.current : (isCpuMode ? p2PosRef.current : renderedOpponentPosRef.current);
 
       // 爆弾処理
       bombsRef.current = bombsRef.current.filter((bomb) => {
